@@ -1,0 +1,35 @@
+- alias: 'Telegram: comandi stampante 3D'
+  id: telegram_elegoo_cmd
+  description: Inoltra i comandi (/status, /stop, /stampa…) a elegoo-notify che gestisce
+    e risponde
+  mode: single
+  trigger:
+  - platform: event
+    event_type: telegram_command
+  condition:
+  - condition: template
+    value_template: '{{ trigger.event.data.get(''chat_id'') == IL_TUO_CHAT_ID  # es. 123456789 }}'
+  action:
+  - service: rest_command.elegoo_telegram_cmd
+    data:
+      text: '{{ trigger.event.data.get(''command'', '''') }}{% if trigger.event.data.get(''args'')
+        %} {{ trigger.event.data.get(''args'') | join('' '') }}{% endif %}'
+      chat_id: '{{ trigger.event.data.chat_id }}'
+- alias: 'Telegram: upload GCODE stampante'
+  id: telegram_elegoo_upload_gcode
+  description: File .gcode inviato in chat → scarico, salvataggio e trasferimento
+    alla Centauri Carbon
+  mode: single
+  trigger:
+  - platform: event
+    event_type: telegram_attachment
+  condition:
+  - condition: template
+    value_template: "{{ trigger.event.data.get('chat_id') == IL_TUO_CHAT_ID  # es. 123456789\n   and (trigger.event.data.get('file_name')\
+      \ or '').lower().endswith(('.gcode', '.gco', '.g')) }}\n"
+  action:
+  - service: rest_command.elegoo_telegram_file
+    data:
+      file_id: '{{ trigger.event.data.file_id }}'
+      file_name: '{{ trigger.event.data.file_name | default(''upload.gcode'') }}'
+      chat_id: '{{ trigger.event.data.chat_id }}'

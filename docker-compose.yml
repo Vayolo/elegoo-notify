@@ -1,0 +1,16 @@
+services:
+  elegoo-notify:
+    build: .
+    image: elegoo-notify:latest
+    container_name: elegoo-notify
+    # accesso diretto alla stampante in LAN + pubblicazione REST su 8766
+    network_mode: host
+    env_file: .env
+    environment:
+      - ELEGOO_CONFIG=/app/config.json
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./data/logs:/app/data/logs
+      - ./data/snapshots:/app/data/snapshots
+      - ./data/gcodes:/app/data/gcodes
+    restart: unless-stopped

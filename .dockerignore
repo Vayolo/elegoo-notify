@@ -1,0 +1,12 @@
+.git
+.env
+.venv
+venv
+data
+tests/out
+__pycache__
+*.pyc
+*.zip
+README.md
+docs/
+install.sh

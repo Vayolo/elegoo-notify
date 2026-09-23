@@ -1,0 +1,149 @@
+{
+  "printer": {
+    "ip": "192.168.1.56",
+    "ws_urls": [
+      "ws://{ip}:3030/websocket",
+      "ws://{ip}:3030/ws",
+      "ws://{ip}:3030/",
+      "ws://{ip}:3333",
+      "ws://{ip}/printer/ws"
+    ],
+    "http_port": 3030,
+    "mainboard_id": null,
+    "discovery_enabled": false,
+    "status_poll_seconds": 10,
+    "request_timeout_seconds": 8,
+    "max_reconnect_backoff_seconds": 30
+  },
+  "service": {
+    "host": "0.0.0.0",
+    "port": 8766,
+    "auth_enabled": false
+  },
+  "telegram": {
+    "api_base": "https://api.telegram.org",
+    "photo_mode": "photo",
+    "progress_step_percent": 10,
+    "notify_interval_minutes": 30,
+    "min_seconds_between_msgs": 45,
+    "silent_progress": true,
+    "notify_on": [
+      "start",
+      "progress",
+      "time",
+      "complete",
+      "failed",
+      "error",
+      "ai_alert"
+    ],
+    "photo_on": [
+      "start",
+      "progress",
+      "complete",
+      "failed",
+      "error",
+      "ai_alert"
+    ],
+    "notify_on_start_service": false
+  },
+  "webcam": {
+    "mode": "mjpeg",
+    "mjpeg_url": "http://{ip}:3031/video",
+    "snapshot_url": "http://{ip}/webcam.jpg",
+    "timeout_seconds": 10,
+    "retries": 2,
+    "persistent_stream": true,
+    "save_snapshots": true,
+    "snapshot_retention": 300
+  },
+  "ai": {
+    "enabled": true,
+    "interval_seconds": 4,
+    "auto_stop": true,
+    "only_while_printing": true,
+    "sensitivity": "medium",
+    "consecutive_frames": 2,
+    "cooldown_seconds": 300,
+    "detectors": {
+      "spaghetti": {
+        "enabled": true,
+        "severity": "critical"
+      },
+      "layer_shift": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "detach": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "breakage": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "runout": {
+        "enabled": false,
+        "severity": "warning"
+      },
+      "smoke": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "ml_defect": {
+        "enabled": true,
+        "severity": "critical"
+      }
+    },
+    "roi": [
+      0.03,
+      0.33,
+      0.94,
+      0.64
+    ],
+    "warmup_samples": 8,
+    "layer_watch": {
+      "enabled": true,
+      "min_layers": 7,
+      "deviance_lag": 5,
+      "frame_delay_s": 1.5,
+      "nozzle_mask": true,
+      "thresholds": {
+        "detach": 1.0,
+        "breakage_diff": 0.2,
+        "runout": 0.02,
+        "runout_consecutive": 6
+      }
+    },
+    "spaghetti_min_layer": 7,
+    "spaghetti_baseline_factor": 3.0,
+    "ml": {
+      "enabled": true,
+      "model_path": "models/encoder_float32.onnx",
+      "prototypes_path": "models/prototypes.json",
+      "threshold": 0.6
+    }
+  },
+  "mqtt": {
+    "enabled": true,
+    "host": "192.168.1.50",
+    "port": 1883,
+    "username": "",
+    "password": "",
+    "base_topic": "elegoo_notify",
+    "discovery_prefix": "homeassistant",
+    "discovery_enabled": true
+  },
+  "paths": {
+    "logs": "data/logs",
+    "snapshots": "data/snapshots",
+    "gcodes": "data/gcodes"
+  },
+  "logging": {
+    "level": "INFO",
+    "max_bytes": 10485760,
+    "backups": 5
+  },
+  "upload": {
+    "max_size_mb": 500
+  }
+}

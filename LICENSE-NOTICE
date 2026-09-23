@@ -1,0 +1,38 @@
+# Licenze e attribuzioni
+
+## PrintGuard — GPL-2.0-only
+
+Il detector ML incluso in `app/ai/ml_detector.py` e i file
+`models/encoder_float32.onnx`, `models/prototypes.json`,
+`models/metadata.json` derivano da:
+
+- **PrintGuard** — https://github.com/oliverbravery/PrintGuard
+  di Oliver Bravery, licenza **GPL-2.0-only**
+- Addestrato in **Edge-FDM-Fault-Detection** —
+  https://github.com/oliverbravery/Edge-FDM-Fault-Detection
+
+Il preprocessing (resize shortest-edge 256 → center crop 224 → luminanza
+replicata su 3 canali con normalizzazione ImageNet), la classificazione
+nearest-prototype euclidea e la formula del defect score
+`0.5·(1+tanh((d²_success − d²_failure)/2))` sono replicati fedelmente da
+`printguard/engine/vision.py`.
+
+**Implicazione di licenza**: queste parti del progetto sono GPL-2.0. Se
+distribuisci il software risultante, l'intero lavoro derivato va rilasciato
+sotto GPL-2.0 con attribuzione e copia della licenza originale
+(https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt).
+Per uso personale/privato nessun obbligo sorge dalla GPL.
+
+## Metodologie CV
+
+- **3DPrintSaviour** (archiviato) — https://github.com/Manicben/3DPrintSaviour:
+  ispirazione metodologica (NRMSE per layer, score/deviance, warm-up
+  layer) reimplementata in modo indipendente in `app/ai/layer_watch.py`.
+- **PrintSight** — https://github.com/bossman-lab/printsight (MIT):
+  euristica del detector statico di stringing (morfologia + thinness)
+  reimplementata in `app/ai/detectors.py`.
+
+## Protocollo stampante
+
+Elegoo Centauri Carbon — SDCP v3 (Smart Device Control Protocol).
+Documentazione della community: https://docs.opencentauri.cc/software/api/

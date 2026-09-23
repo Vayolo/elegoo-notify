@@ -1,0 +1,17 @@
+# Core
+fastapi>=0.110,<1
+uvicorn>=0.29,<1
+websockets>=12,<14
+aiohttp>=3.9,<4
+python-multipart>=0.0.9
+python-dotenv>=1.0
+
+# MQTT (Home Assistant)
+aiomqtt>=2.3,<3
+
+# AI leggera (frame differencing / edge detection)
+opencv-python-headless>=4.11
+numpy>=2.1
+
+# Detector ML (stack PrintGuard, GPL-2.0): encoder ONNX ShuffleNetV2
+onnxruntime>=1.18

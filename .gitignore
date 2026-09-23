@@ -1,0 +1,19 @@
+# Segreti e ambienti
+.env
+*.token
+
+# Dati runtime
+data/logs/
+data/snapshots/
+data/gcodes/
+logs/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Config personale (dal repo usare config.json.example)
+config.json
+
+# Test artifacts
+tests/out/

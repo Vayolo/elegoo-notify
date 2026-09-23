@@ -1,0 +1,58 @@
+title: Stampante 3D
+views:
+  - title: Stampante 3D
+    icon: mdi:printer-3d
+    cards:
+      - type: markdown
+        content: >
+          ## 🖨️ Elegoo Centauri Carbon
+
+          Monitoraggio, comandi e rilevamento AI difetti — servizio
+          [elegoo-notify](http://192.168.1.50:8766/)
+      - type: picture
+        entity: camera.stampante_3d
+        name: Webcam
+      - type: gauge
+        entity: sensor.elegoo_centauri_carbon_avanzamento_stampa
+        name: Avanzamento
+        min: 0
+        max: 100
+        severity:
+          green: 80
+          yellow: 40
+          red: 10
+      - type: entities
+        title: Stampa
+        entities:
+          - sensor.elegoo_centauri_carbon_stato_stampante
+          - sensor.elegoo_centauri_carbon_file_in_stampa
+          - sensor.elegoo_centauri_carbon_tempo_rimanente
+          - sensor.elegoo_centauri_carbon_tempo_trascorso
+          - binary_sensor.elegoo_centauri_carbon_in_stampa
+          - sensor.elegoo_centauri_carbon_velocita_stampa
+          - sensor.elegoo_centauri_carbon_ultimo_errore
+      - type: entities
+        title: Comandi
+        entities:
+          - button.elegoo_centauri_carbon_ferma_stampa
+          - button.elegoo_centauri_carbon_pausa_stampa
+          - button.elegoo_centauri_carbon_riprendi_stampa
+      - type: entities
+        title: Temperature (°C)
+        entities:
+          - sensor.elegoo_centauri_carbon_temperatura_ugello
+          - sensor.elegoo_centauri_carbon_temperatura_piatto
+          - sensor.elegoo_centauri_carbon_temperatura_camera
+      - type: entities
+        title: Rilevamento AI
+        entities:
+          - sensor.elegoo_centauri_carbon_rischio_ai
+          - sensor.elegoo_centauri_carbon_ultimo_alert_ai
+      - type: history-graph
+        title: Andamento (ultime 2 ore)
+        hours_to_show: 2
+        entities:
+          - sensor.elegoo_centauri_carbon_temperatura_ugello
+          - sensor.elegoo_centauri_carbon_temperatura_piatto
+          - sensor.elegoo_centauri_carbon_avanzamento_stampa
+          - sensor.elegoo_centauri_carbon_rischio_ai

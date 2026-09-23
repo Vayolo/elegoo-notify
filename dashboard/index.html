@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Elegoo Centauri — Monitor</title>
+<style>
+:root{--bg:#0f1419;--card:#1a2129;--accent:#4fc3f7;--ok:#66bb6a;--warn:#ffb74d;--err:#ef5350;--txt:#cfd8dc;--dim:#78909c}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--txt);font:15px/1.45 system-ui,Segoe UI,Roboto,sans-serif;padding:16px}
+h1{font-size:1.25rem;display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.dot{width:12px;height:12px;border-radius:50%;background:var(--err);flex:0 0 auto}
+.dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.card{background:var(--card);border-radius:10px;padding:14px}
+.card h2{font-size:.8rem;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px}
+.big{font-size:1.5rem;font-weight:600;margin:2px 0}
+.bar{background:#26313c;border-radius:6px;height:14px;margin:8px 0;overflow:hidden}
+.bar>div{background:linear-gradient(90deg,#0288d1,#4fc3f7);height:100%;width:0%;transition:width .5s}
+.kv{display:flex;justify-content:space-between;padding:3px 0;font-size:.92rem}
+.kv b{font-weight:500;color:#e6edf3}
+img#cam{width:100%;border-radius:8px;background:#000;min-height:120px}
+canvas{width:100%;height:150px}
+.log{max-height:260px;overflow-y:auto;font-size:.82rem;font-family:ui-monospace,Consolas,monospace}
+.log div{padding:2px 0;border-bottom:1px solid #232d38}
+.log .t{color:var(--dim)}
+button{background:#2b3a4a;color:var(--txt);border:0;border-radius:7px;padding:9px 14px;font-size:.9rem;cursor:pointer;margin-right:8px}
+button:hover{background:#38506a}
+button.stop{background:#5c2b2b}button.stop:hover{background:#7d3232}
+button.ok{background:#2b5c3a}button.ok:hover{background:#35774a}
+.warn{color:var(--warn)}.err{color:var(--err)}.ok{color:var(--ok)}
+@media(max-width:640px){body{padding:10px}.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<h1><span class="dot" id="connDot"></span>Elegoo Centauri Carbon <span id="wsInfo" style="font-size:.75rem;color:var(--dim)"></span></h1>
+<div class="grid">
+  <div class="card" id="statusCard">
+    <h2>Stato stampa</h2>
+    <div class="big" id="status">—</div>
+    <div class="kv"><span>File</span><b id="filename">—</b></div>
+    <div class="kv"><span>Avanzamento</span><b id="pctLabel">—</b></div>
+    <div class="bar"><div id="pctBar"></div></div>
+    <div class="kv"><span>Tempo rimanente</span><b id="eta">—</b></div>
+    <div class="kv"><span>Layer</span><b id="layers">—</b></div>
+    <div style="margin-top:12px">
+      <button id="btnPause" onclick="cmd('pause')">⏸ Pausa</button>
+      <button class="ok" id="btnResume" onclick="cmd('resume')">▶ Riprendi</button>
+      <button class="stop" onclick="if(confirm('Fermare davvero la stampa?'))cmd('stop')">⏹ Stop</button>
+      <button id="btnPhoto" onclick="snapshot()">📷 Foto</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Webcam</h2>
+    <img id="cam" alt="webcam" src="/video" onerror="camFallback()">
+  </div>
+
+  <div class="card">
+    <h2>Temperature</h2>
+    <div class="kv"><span>Ugello</span><b id="tNoz">—</b></div>
+    <div class="kv"><span>Piatto</span><b id="tBed">—</b></div>
+    <div class="kv"><span>Camera</span><b id="tCham">—</b></div>
+    <canvas id="chart" width="600" height="150"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>Eventi</h2>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+// Auth (opzionale): se il server risponde 401, chiede le credenziali.
+function authHeader(){
+  const c=localStorage.getItem('elegoo_auth');
+  return c?'Basic '+c:null;
+}
+async function askAuth(){
+  const u=prompt('Utente:'),p=prompt('Password:');
+  if(u&&p){localStorage.setItem('elegoo_auth',btoa(u+':'+p));location.reload();}
+}
+async function jfetch(url,opts={}){
+  const h=Object.assign({},opts.headers||{});
+  const a=authHeader(); if(a)h['Authorization']=a;
+  const r=await fetch(url,Object.assign({},opts,{headers:h}));
+  if(r.status===401){askAuth();throw new Error('401');}
+  return r;
+}
+function esc(s){const A=String.fromCharCode(38);return String(s).replace(/[<>&]/g,c=>({'<':A+'lt;','>':A+'gt;','&':A+'amp;'}[c]));}
+function fmtEta(s){if(s==null)return '—';const m=Math.round(s/60);if(m<60)return m+' min';return Math.floor(m/60)+'h '+('0'+m%60).slice(-2)+'m';}
+
+const temps={t:[],noz:[],bed:[]};
+function setState(s){
+  document.getElementById('status').textContent=s.status||'—';
+  document.getElementById('filename').textContent=s.filename||'—';
+  const pct=s.percent;
+  document.getElementById('pctLabel').textContent=pct!=null?pct+'%':'—';
+  document.getElementById('pctBar').style.width=(pct||0)+'%';
+  document.getElementById('eta').textContent=fmtEta(s.time_remaining_s);
+  document.getElementById('layers').textContent=(s.total_layers?s.current_layer+'/'+s.total_layers:'—');
+  document.getElementById('connDot').classList.toggle('on',!!s.connected);
+  const t=s.temps||{};
+  document.getElementById('tNoz').textContent=(t.nozzle!=null?t.nozzle+' / '+(t.nozzle_target??'?')+' °C':'—');
+  document.getElementById('tBed').textContent=(t.hotbed!=null?t.hotbed+' / '+(t.hotbed_target??'?')+' °C':'—');
+  document.getElementById('tCham').textContent=(t.chamber!=null?t.chamber+' °C':'—');
+  if(t.nozzle!=null){
+    const now=Date.now();
+    temps.t.push(now);temps.nozz.push(t.nozzle);temps.bed.push(t.hotbed??0);
+    while(temps.t.length>240){temps.t.shift();temps.nozz.shift();temps.bed.shift();}
+    drawChart();
+  }
+}
+function addLog(ev){
+  const box=document.getElementById('log');
+  const when=new Date(ev.ts*1000).toLocaleTimeString('it-IT');
+  const icons={print_started:'▶',print_completed:'✅',print_failed:'❌',print_paused:'⏸',print_resumed:'▶',printer_error:'⚠️',ai_alert:'🤖',remote_command:'🎛',printer_disconnected:'🔌',printer_connected:'🔗'};
+  const d=document.createElement('div');
+  const ic=icons[ev.type]||'•';
+  let extra=ev.type==='ai_alert'&&ev.data?ev.data.type+(ev.data.severity?' ('+ev.data.severity+')':''):'';
+  if(ev.type==='remote_command'&&ev.data)extra=ev.data.command;
+  d.innerHTML='<span class="t">'+when+'</span> '+ic+' '+esc(ev.type)+' '+(extra?'<span class="warn">'+esc(extra)+'</span>':'');
+  box.prepend(d);
+  while(box.children.length>40)box.lastChild.remove();
+}
+async function cmd(kind){
+  try{
+    const r=await jfetch('/cmd/'+kind,{method:'POST'});
+    const j=await r.json();
+    if(!j.ok)alert('Comando rifiutato:\n'+(j.error||'ack '+j.ack));
+    addLog({ts:Date.now()/1000,type:'remote_command',data:{command:kind+' → '+(j.ok?'ok':('err '+(j.error||'')))}})
+  }catch(e){alert('Errore comando: '+e)}
+}
+function snapshot(){
+  jfetch('/photo').then(r=>r.blob()).then(b=>{
+    const u=URL.createObjectURL(b);window.open(u,'_blank');setTimeout(()=>URL.revokeObjectURL(u),60000);
+  }).catch(e=>alert('Foto non disponibile: '+e));
+}
+let camPoll=null;
+function camFallback(){
+  const img=document.getElementById('cam');
+  img.removeAttribute('src');
+  camPoll=setInterval(()=>{
+    jfetch('/photo').then(r=>{if(r.ok)return r.blob();throw 0}).then(b=>{
+      img.src=URL.createObjectURL(b);
+    }).catch(()=>{});
+  },4000);
+}
+// ---- SSE via fetch (supporta l'header Authorization) ----
+let sseAbort=null;
+async function sseLoop(){
+  for(;;){
+    try{
+      sseAbort=new AbortController();
+      const r=await jfetch('/api/events',{signal:sseAbort.signal});
+      if(!r.ok||!r.body)throw new Error('SSE '+r.status);
+      const reader=r.body.getReader(),dec=new TextDecoder();
+      let buf='';
+      for(;;){
+        const {done,value}=await reader.read();
+        if(done)break;
+        buf+=dec.decode(value,{stream:true});
+        let i;
+        while((i=buf.indexOf('\n\n'))>=0){
+          const chunk=buf.slice(0,i);buf=buf.slice(i+2);
+          for(const line of chunk.split('\n')){
+            if(line.startsWith('data: ')){
+              try{
+                const ev=JSON.parse(line.slice(6));
+                if(ev.type==='state_changed')setState(ev.data||{});
+                else addLog(ev);
+              }catch(_){}
+            }
+          }
+        }
+      }
+    }catch(e){/* silenzio */}
+    await new Promise(r=>setTimeout(r,3000));
+  }
+}
+// ---- Grafico temperature (canvas, zero dipendenze) ----
+function drawChart(){
+  const c=document.getElementById('chart'),x=c.getContext('2d');
+  const W=c.width=c.clientWidth*2,H=c.height=300;
+  x.clearRect(0,0,W,H);
+  if(temps.t.length<2)return;
+  const max=Math.max(60,...temps.nozz,...temps.bed)*1.05;
+  x.strokeStyle='#26313c';x.fillStyle='#607080';x.font='20px system-ui';
+  for(let g=0;g<=4;g++){
+    const y=H-(H-20)*g/4;
+    x.beginPath();x.moveTo(0,y);x.lineTo(W,y);x.stroke();
+    x.fillText(Math.round(max*g/4)+'°',6,y-4);
+  }
+  const line=(arr,color)=>{
+    x.strokeStyle=color;x.lineWidth=3;x.beginPath();
+    arr.forEach((v,i)=>{
+      const px=i/(arr.length-1)*W, py=H-20-(v/max)*(H-40);
+      i?x.lineTo(px,py):x.moveTo(px,py);
+    });
+    x.stroke();
+  };
+  line(temps.nozz,'#ef5350');
+  line(temps.bed,'#4fc3f7');
+}
+sseLoop();
+// stato iniziale
+jfetch('/status').then(r=>r.json()).then(setState).catch(()=>{});
+</script>
+</body>
+</html>
