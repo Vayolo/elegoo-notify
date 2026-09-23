@@ -3,7 +3,7 @@
 [![License: GPL v2](https://img.shields.io/badge/License-GPLv2-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](requirements.txt)
 [![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)](Dockerfile)
-[![Tests](https://img.shields.io/badge/tests-49%20checks-green)](#testing)
+[![Tests](https://img.shields.io/badge/tests-64%20checks-green)](#testing)
 
 **Self-hosted monitoring, Telegram notifications, AI print-failure detection and
 remote control for the Elegoo Centauri Carbon 3D printer.**
@@ -259,6 +259,35 @@ history and links) is provided in [`hass/dashboards/stampante3d.yaml`]
 pointing at `http://<host>:8766/video` (the service fan-out) — *not* directly
 at the printer, which accepts a single camera client.
 
+## Klipper / COSMOS support (dual driver)
+
+elegoo-notify speaks **two printer dialects**, selected with `printer.driver`:
+
+| | `"sdcp"` (default) | `"moonraker"` |
+|---|---|---|
+| Firmware | Stock Elegoo Centauri Carbon | [COSMOS](https://docs.opencentauri.cc/klipper-conversion/cosmos/cosmos/) (Klipper/Kalico) or any Klipper host |
+| Transport | SDCP v3 WebSocket `:3030` + HTTP upload | Moonraker REST `:7125` |
+| Light control | refused during print (firmware quirk) | **always works** (SET_PIN gcode) |
+| Speed | Cmd 403 `PrintSpeedPct` | `M220` |
+| Status | printer pushes → events derived | poller translates `print_stats`/objects into SDCP-like payloads → **the whole stack downstream is unchanged** |
+
+Switch by setting in `config.json`:
+
+```json
+"printer": {"ip": "192.168.1.56", "driver": "moonraker",
+            "moonraker": {"port": 7125, "api_key": "",
+                          "light_on_gcode": "SET_PIN PIN=chamber_light VALUE=1",
+                          "light_off_gcode": "SET_PIN PIN=chamber_light VALUE=0"}}
+```
+
+**Is COSMOS worth it?** For tinkerers: full Klipper ecosystem (bed mesh in the
+webUI, input shaper, adaptive meshing, CANVAS/AFC multi-material, exhaust fan,
+no cloud phoning home) — and with this driver elegoo-notify keeps every
+feature, notifications and AI included. Caveats: the stock mainboard has very
+little headroom (no extra plugins), first boot flashes toolhead/bed boards,
+and the Elegoo app/cloud stop working. If you only need monitoring, the stock
+firmware + this service is already a complete solution.
+
 ## REST API
 
 | Endpoint | Description |
@@ -351,7 +380,8 @@ pip install -r requirements.txt
 python3 tests/run_ws_tests.py      # 24 checks: events → notifications+photos, REST, upload, print
 python3 tests/run_ai_tests.py     # 11 checks: spaghetti → critical alert → auto-stop fail-safe, smoke
 python3 tests/run_layer_tests.py  # 10 checks: LayerWatch score/deviance → detach
-python3 tests/run_ml_test.py      # 4 checks: ML loads, sane scores (skips if models absent)
+python3 tests/run_ml_test.py      # 4 checks: ML loads, real healthy frame scores low
+python3 tests/run_moonraker_tests.py # 13 checks: full stack on a Klipper/COSMOS printer
 ```
 
 The simulator implements the real SDCP payloads (see [docs/examples.md]

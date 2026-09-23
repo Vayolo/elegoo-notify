@@ -162,8 +162,11 @@ class MoonrakerApi:
         form.add_field("root", "gcodes")
         form.add_field("file", data, filename=filename,
                        content_type="application/octet-stream")
+        # NB: NON passare _headers() (forza application/json e distrugge
+        # il multipart); serve solo l'eventuale api key
+        headers = {"X-Api-Key": self.api_key} if self.api_key else {}
         async with self.session.post(f"{self.base}/server/files/upload",
-                                     data=form, headers=self._headers(),
+                                     data=form, headers=headers,
                                      timeout=aiohttp.ClientTimeout(total=300)) as r:
             body = await r.json(content_type=None)
             if r.status >= 400 or body.get("error"):
