@@ -93,6 +93,11 @@ class PrinterApi:
     async def set_print_speed(self, pct: int) -> dict[str, Any]:
         return await self._request(protocol.CMD_SET_CONFIG, {"PrintSpeedPct": int(pct)})
 
+    async def set_light(self, on: bool) -> dict[str, Any]:
+        """Luce interna della camera (LightStatus.SecondLight, 0/1)."""
+        return await self._request(protocol.CMD_SET_CONFIG,
+                                   {"LightStatus": {"SecondLight": 1 if on else 0}})
+
     async def set_fan_speed(self, model: int | None = None, auxiliary: int | None = None,
                             box: int | None = None) -> dict[str, Any]:
         target: dict[str, int] = {}

@@ -17,3 +17,6 @@ config.json
 
 # Test artifacts
 tests/out/
+
+# Detector ML (scaricabili via scripts/download_models.py — GPL-2.0)
+models/

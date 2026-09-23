@@ -56,6 +56,8 @@ class Simulator:
         self.temp_nozzle = 24.0
         self.temp_bed = 23.0
         self.temp_chamber = 24.5
+        self.light = 1
+        self.speed_pct = 100
         self.anomaly: str | None = None
 
         self.commands: list[dict] = []
@@ -95,7 +97,8 @@ class Simulator:
                 "TempTargetBox": 0,
                 "CurrenCoord": f"150.5,75.2,{10.8 + self.current_layer}",
                 "CurrentFanSpeed": {"ModelFan": 80, "ModeFan": 80, "AuxiliaryFan": 50, "BoxFan": 0},
-                "LightStatus": {"SecondLight": 1},
+                "LightStatus": {"SecondLight": self.light},
+                "PrintSpeedPct": self.speed_pct,
                 "ZOffset": 0.0,
                 "PrintSpeed": 100,
                 "PrintInfo": print_info,
@@ -302,6 +305,13 @@ class Simulator:
                 "BeginTime": int(time.time()) - 1000, "EndTime": int(time.time()),
                 "TaskStatus": 2, "AlreadyPrintLayer": self.current_layer,
                 "ErrorStatusReason": self.error_reason}]}))
+        elif cmd == 403:
+            if "PrintSpeedPct" in payload:
+                self.speed_pct = int(payload["PrintSpeedPct"])
+            if isinstance(payload.get("LightStatus"), dict):
+                self.light = int(payload["LightStatus"].get("SecondLight", self.light))
+            await self.push_status()
+            await self._push(ws, self.response_msg(req, {"Ack": 0}))
         elif cmd == 386:
             data = {"Ack": 0}
             if payload.get("Enable"):

@@ -39,6 +39,9 @@ HELP_TEXT = (
     "/pause o /pausa — metti in pausa\n"
     "/resume o /riprendi — riprendi la stampa\n"
     "/stop — ferma la stampa (chiede conferma)\n"
+    "/velocita 80 — imposta la velocità di stampa (50-150%)\n"
+    "/luce on|off — accendi/spegni la luce interna\n"
+    "/link — link diretti a dashboard e webcam\n"
     "/file — elenco GCODE (stampante + locali)\n"
     "/stampa nome.gcode — avvia una stampa (chiede conferma)\n"
     "/upload — come caricare un file GCODE"
@@ -106,6 +109,12 @@ class TelegramCommandHandler:
             elif low.startswith(("/resume", "/riprendi")):
                 await self._cmd_simple("resume", self.printer_api.resume_print,
                                        "▶ Resume", "▶️ Ripresa inviata correttamente.")
+            elif low.startswith(("/velocita", "/speed", "/vel")):
+                await self._cmd_speed(text)
+            elif low.startswith(("/luce", "/light")):
+                await self._cmd_light(text)
+            elif low.startswith(("/link", "/webcam", "/cam")):
+                await self._cmd_link()
             elif low.startswith("/stop"):
                 await self._cmd_stop(text)
             elif low.startswith(("/file", "/filelist", "/files")):
@@ -176,6 +185,48 @@ class TelegramCommandHandler:
             await self._reply(ok_text, kind=f"tg_{name}")
         except Exception as e:  # noqa: BLE001
             await self._reply(f"⚠️ Comando {name} rifiutato dalla stampante: {e}")
+
+    async def _cmd_speed(self, text: str) -> None:
+        parts = text.split()
+        if len(parts) < 2 or not parts[1].isdigit():
+            await self._reply("Uso: /velocita 80 (valore 50-150)")
+            return
+        pct = int(parts[1])
+        if not 50 <= pct <= 150:
+            await self._reply("⚠️ Valore fuori range: usa 50-150")
+            return
+        try:
+            await self.printer_api.set_print_speed(pct)
+            await self._reply(f"⚡ Velocità di stampa impostata al <b>{pct}%</b>",
+                              kind="tg_speed")
+        except Exception as e:  # noqa: BLE001
+            await self._reply(f"⚠️ Impostazione velocità fallita: {e}")
+
+    async def _cmd_light(self, text: str) -> None:
+        arg = text.split(maxsplit=1)
+        want = arg[1].strip().lower() if len(arg) > 1 else ""
+        if want not in ("on", "off", "1", "0", "acceso", "spento", "true", "false"):
+            await self._reply("Uso: /luce on|off (attuale: "
+                              f"{'ON 💡' if self.state.light else 'OFF'})")
+            return
+        on = want in ("on", "1", "acceso", "true")
+        try:
+            await self.printer_api.set_light(on)
+            await self._reply("💡 Luce interna <b>accesa</b>" if on
+                              else "🌑 Luce interna <b>spenta</b>", kind="tg_light")
+        except Exception as e:  # noqa: BLE001
+            await self._reply(f"⚠️ Comando luce fallito: {e}")
+
+    async def _cmd_link(self) -> None:
+        base = self.cfg.service.get("public_url") or "http://192.168.1.50:8766"
+        await self._reply(
+            "🔗 <b>Link diretti</b>\n"
+            f"🖥 <a href=\"{base}\">Dashboard web</a> — stato, temperature, comandi\n"
+            f"📹 <a href=\"{base}/video\">Stream webcam</a> (MJPEG)\n"
+            f"🖼 <a href=\"{base}/photo\">Snapshot webcam</a>\n"
+            f"📊 <a href=\"{base}/ai/metrics\">Metriche AI</a> (JSON)\n"
+            "💡 I link funzionano da rete LAN o VPN (es. Meshnet).",
+            kind="tg_link")
 
     async def _cmd_stop(self, text: str) -> None:
         if "conferma" in text.lower():

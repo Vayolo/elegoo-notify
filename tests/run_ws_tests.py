@@ -226,6 +226,20 @@ async def main() -> int:
             pass
         check("Stampa da /print attiva sullo stato", ctx.state.is_printing)
 
+        # velocità e luce via REST (Cmd 403 sul simulatore)
+        async with session.post(f"{API}/cmd/speed", json={"percent": 80}) as r:
+            j = await r.json()
+        check("REST /cmd/speed imposta la velocità",
+              r.status == 200 and j.get("ok") is True and any(
+                  c["cmd"] == 403 and c["data"].get("PrintSpeedPct") == 80
+                  for c in sim.commands), f"{j}")
+        async with session.post(f"{API}/cmd/light", json={"on": False}) as r:
+            j = await r.json()
+        check("REST /cmd/light spegne la luce",
+              r.status == 200 and j.get("ok") is True and any(
+                  c["cmd"] == 403 and (c["data"].get("LightStatus") or {}).get("SecondLight") == 0
+                  for c in sim.commands), f"{j}")
+
         async with session.post(f"{API}/cmd/stop") as r:
             j = await r.json()
         check("REST /cmd/stop eseguito sulla stampante",

@@ -172,6 +172,30 @@ def create_app(ctx) -> FastAPI:
     async def cmd_resume() -> dict:
         return await _run_cmd("resume", ctx.printer_api.resume_print)
 
+    @app.post("/cmd/speed", dependencies=[Depends(require_auth)])
+    async def cmd_speed(body: dict) -> dict:
+        """Velocità di stampa: {"percent": 80} (50-150)."""
+        try:
+            pct = int(float(body.get("percent", 100)))
+            if not 50 <= pct <= 150:
+                raise ValueError("percent deve essere 50-150")
+            await ctx.printer_api.set_print_speed(pct)
+            ctx.bus.publish("remote_command", {"command": "speed", "value": pct})
+            return {"ok": True, "command": "speed", "percent": pct}
+        except (ConnectionError, asyncio.TimeoutError, TimeoutError) as e:
+            raise HTTPException(503, f"stampante non raggiungibile: {e}") from e
+
+    @app.post("/cmd/light", dependencies=[Depends(require_auth)])
+    async def cmd_light(body: dict) -> dict:
+        """Luce interna: {"on": true|false}."""
+        try:
+            on = bool(body.get("on", False))
+            await ctx.printer_api.set_light(on)
+            ctx.bus.publish("remote_command", {"command": "light", "value": on})
+            return {"ok": True, "command": "light", "on": on}
+        except (ConnectionError, asyncio.TimeoutError, TimeoutError) as e:
+            raise HTTPException(503, f"stampante non raggiungibile: {e}") from e
+
     @app.post("/print", dependencies=[Depends(require_auth)])
     async def start_print(body: dict) -> dict:
         filename = str(body.get("filename") or "").strip()

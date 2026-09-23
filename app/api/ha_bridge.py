@@ -158,6 +158,18 @@ class HaBridge:
             button("pause", "Pausa stampa", f"{base}/cmd/pause", "pause"),
             button("resume", "Riprendi stampa", f"{base}/cmd/resume", "resume"),
         ]
+        payloads.append((f"{prefix}/number/elegoo_notify/speed/config", {
+            "name": "Velocità stampa", "unique_id": "elegoo_notify_speed",
+            "state_topic": f"{base}/speed", "command_topic": f"{base}/set/speed",
+            "min": 50, "max": 150, "step": 5,
+            "availability_topic": avail, "device": DEVICE, "icon": "mdi:speedometer",
+        }))
+        payloads.append((f"{prefix}/light/elegoo_notify/light/config", {
+            "name": "Luce interna", "unique_id": "elegoo_notify_light",
+            "state_topic": f"{base}/light", "command_topic": f"{base}/set/light",
+            "payload_on": "ON", "payload_off": "OFF",
+            "availability_topic": avail, "device": DEVICE,
+        }))
         return payloads
 
     async def _publish_discovery(self, client: aiomqtt.Client) -> None:
@@ -185,6 +197,7 @@ class HaBridge:
         el = snap.get("elapsed_s")
         msgs.append((f"{self.base}/elapsed", str(el // 60) if el else ""))
         msgs.append((f"{self.base}/speed", str(s.print_speed)))
+        msgs.append((f"{self.base}/light", "ON" if s.light else ("OFF" if s.light is not None else "")))
         msgs.append((f"{self.base}/error", s.last_error or "none"))
         if self.ai_monitor is not None and self.ai_monitor.ml is not None:
             risk = float(self.ai_monitor.ml.last_result.get("score", 0.0)) * 100
@@ -223,12 +236,24 @@ class HaBridge:
             sub.close()
 
     async def _handle_incoming(self, client: aiomqtt.Client) -> None:
-        """Comandi da HA ({base}/cmd/stop|pause|resume)."""
+        """Comandi da HA: {base}/cmd/stop|pause|resume e {base}/set/speed|light."""
         async for message in client.messages:
             topic = str(message.topic)
-            payload = bytes(message.payload).decode(errors="replace").strip().lower()
-            cmd = topic.removeprefix(f"{self.base}/cmd/").lower() or payload
+            raw = bytes(message.payload).decode(errors="replace").strip()
+            payload = raw.lower()
             try:
+                if topic.startswith(f"{self.base}/set/"):
+                    setting = topic.removeprefix(f"{self.base}/set/").lower()
+                    if setting == "speed":
+                        await self.printer_api.set_print_speed(int(float(raw)))
+                        log.info("Velocità impostata via MQTT: %s%%", raw)
+                    elif setting == "light":
+                        await self.printer_api.set_light(payload in ("on", "1", "true"))
+                        log.info("Luce interna via MQTT: %s", payload)
+                    self.bus.publish("remote_command", {"command": f"set_{setting}",
+                                                        "value": raw, "source": "mqtt"})
+                    continue
+                cmd = topic.removeprefix(f"{self.base}/cmd/").lower() or payload
                 if cmd == "stop":
                     await self.printer_api.stop_print()
                 elif cmd == "pause":
@@ -241,4 +266,4 @@ class HaBridge:
                 log.info("Comando MQTT eseguito: %s", cmd)
                 self.bus.publish("remote_command", {"command": cmd, "source": "mqtt"})
             except Exception as e:  # noqa: BLE001
-                log.error("Comando MQTT '%s' fallito: %s", cmd, e)
+                log.error("Comando MQTT '%s' fallito: %s", topic, e)

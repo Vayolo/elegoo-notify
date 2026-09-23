@@ -101,6 +101,7 @@ class PrinterState:
         self.error_number: int = 0
         self.reported_progress: Optional[int] = None
         self.print_speed: int = 100
+        self.light: Optional[bool] = None
         self.temps: dict[str, float] = {}
         self.coords: tuple[float, float, float] = (0.0, 0.0, 0.0)
         self.attributes: dict[str, Any] = {}
@@ -165,6 +166,13 @@ class PrinterState:
                 temps_changed = True
             self.temps[name] = new
             self.temps[f"{name}_target"] = float(tgt) if tgt is not None else None
+
+        light = _first(status, "LightStatus")
+        if isinstance(light, dict):
+            try:
+                self.light = bool(int(light.get("SecondLight", 0)))
+            except (ValueError, TypeError):
+                pass
 
         coord_raw = _first(status, "CurrenCoord", "CurrentCoord")
         if isinstance(coord_raw, str):
@@ -337,6 +345,7 @@ class PrinterState:
             "error_number": self.error_number,
             "last_error": self.last_error,
             "print_speed": self.print_speed,
+            "light": self.light,
             "elapsed_s": (int(time.time() - self._job_started_ts)
                           if self._job_started_ts else None),
             "temps": dict(self.temps),

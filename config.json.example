@@ -18,7 +18,8 @@
   "service": {
     "host": "0.0.0.0",
     "port": 8766,
-    "auth_enabled": false
+    "auth_enabled": false,
+    "public_url": "http://192.168.1.50:8766"
   },
   "telegram": {
     "api_base": "https://api.telegram.org",

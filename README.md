@@ -240,6 +240,8 @@ automaticamente in HA (broker già usato da HA: `192.168.1.50:1883`).
 | `sensor.elegoo_centauri_carbon_ultimo_alert_ai` / `_ultimo_errore` | ultimo alert / errore |
 | `binary_sensor.elegoo_centauri_carbon_in_stampa` | ON durante la stampa |
 | `button.elegoo_centauri_carbon_ferma_stampa` / `_pausa_stampa` / `_riprendi_stampa` | comandi |
+| `number.elegoo_centauri_carbon_velocita_stampa` | velocità 50-150% (settabile) |
+| `light.elegoo_centauri_carbon_luce_interna` | luce interna ON/OFF |
 
 **Dashboard dedicata "Stampante 3D"** (`http://192.168.1.50:8123/stampante-3d`):
 gauge avanzamento, webcam live, temperature, comandi, rischio AI, storico —
@@ -283,6 +285,9 @@ stack, foto comprese). Automazioni già pronte: `telegram_elegoo_cmd` e
 | `/foto` | ultimo frame webcam |
 | `/ai` | metriche detector (ML score, CV, layer) |
 | `/pause` `/pausa` · `/resume` `/riprendi` | pausa/riprendi |
+| `/velocita 80` (o `/speed`) | velocità di stampa 50-150% |
+| `/luce on`/`/luce off` | luce interna della camera |
+| `/link` | link cliccabili a dashboard e webcam |
 | `/stop` | **ferma** (conferma: `/stop conferma`) |
 | `/file` | elenco GCODE (stampante + locali) |
 | `/stampa nome.gcode` | avvia stampa (conferma a 2 passaggi) |
@@ -301,7 +306,7 @@ del servizio); comandi distruttivi con conferma a 2 passaggi (TTL 120 s).
 
 **Stack v3 = ML PrintGuard + CV ibrida + LayerWatch**
 
-Il rilevamento primario ora è il **modello di PrintGuard**
+Il rilevamento primario è il **modello di PrintGuard**
 (https://github.com/oliverbravery/PrintGuard, **GPL-2.0**, vedi
 `LICENSE-NOTICE`): encoder **ShuffleNetV2-x1.0** (~5 MB, ONNX) →
 embedding 1024-d → prototipi success/failure → **score 0-1** di difetto.
@@ -309,7 +314,25 @@ CPU-only, 1 inferenza ogni 4 s: carico trascurabile (Celeron ok).
 Soglia `ai.ml.threshold` (default 0.6). Sul telaio sano della Centauri
 lo score reale è ~0.07 (margine 8×): falsi positivi praticamente nulli.
 
-Fallback automatico: se onnxruntime/modello mancano → solo stack CV.
+**Fallback automatico**: se onnxruntime/modello mancano → solo stack CV.
+
+### Integrare il detector ML (opzionale)
+
+I binari del modello NON sono inclusi nel repo (licenza GPL-2.0 e peso):
+si scaricano con un comando dalla repo originale di PrintGuard:
+
+```bash
+python3 scripts/download_models.py   # scarica models/{encoder_float32.onnx, prototypes.json, metadata.json}
+```
+
+Poi riavvia: al via il log mostra `Modello ML caricato`. Verifiche rapide:
+
+```bash
+curl http://127.0.0.1:8766/ai/metrics | grep -A3 ml     # score live
+python3 tests/run_ml_test.py                            # suite ML (4 check)
+```
+
+Per disattivarlo del tutto: `ai.ml.enabled: false` in `config.json`.
 
 **Stack v2** — zero ML pesante, tutto OpenCV, metodologie da tre progetti
 open source studiati sul campo:

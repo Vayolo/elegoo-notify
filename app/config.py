@@ -30,7 +30,8 @@ DEFAULTS: dict[str, Any] = {
         "request_timeout_seconds": 8,
         "max_reconnect_backoff_seconds": 30,
     },
-    "service": {"host": "0.0.0.0", "port": 8766, "auth_enabled": False},
+    "service": {"host": "0.0.0.0", "port": 8766, "auth_enabled": False,
+                "public_url": "http://192.168.1.50:8766"},
     "telegram": {
         "api_base": "https://api.telegram.org",
         "photo_mode": "photo",
