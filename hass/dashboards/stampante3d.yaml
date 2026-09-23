@@ -10,7 +10,8 @@ views:
           Monitoraggio, comandi e rilevamento AI difetti — servizio
           [elegoo-notify](http://192.168.1.50:8766/)
       - type: picture
-        entity: camera.stampante_3d
+        camera_image: camera.stampante_3d
+        camera_view: auto
         name: Webcam
       - type: gauge
         entity: sensor.elegoo_centauri_carbon_avanzamento_stampa

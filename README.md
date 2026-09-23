@@ -3,470 +3,375 @@
 [![License: GPL v2](https://img.shields.io/badge/License-GPLv2-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](requirements.txt)
 [![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)](Dockerfile)
-[![Home Assistant](https://img.shields.io/badge/Home_Assistant-MQTT%20discovery-41BDF5?logo=homeassistant&logoColor=white)](#-home-assistant)
-[![Tests](https://img.shields.io/badge/test-47%2F47%20PASS-brightgreen)](#-test)
+[![Tests](https://img.shields.io/badge/tests-49%20checks-green)](#testing)
 
-**Monitoraggio, notifiche Telegram, rilevamento difetti con AI e controllo remoto
-per la Elegoo Centauri Carbon** — production-ready, Celeron-friendly, tutto self-hosted.
+**Self-hosted monitoring, Telegram notifications, AI print-failure detection and
+remote control for the Elegoo Centauri Carbon 3D printer.**
 
-> 🤖 Rilevamento difetti a doppio strato: **modello ML ShuffleNetV2** (stack
-> [PrintGuard](https://github.com/oliverbravery/PrintGuard), GPL-2.0 — ~5 MB, CPU)
-> + euristiche OpenCV (spaghetti, layer shift, fumo, detach per-layer ispirate a
-> [3DPrintSaviour](https://github.com/Manicben/3DPrintSaviour) e
-> [PrintSight](https://github.com/bossman-lab/printsight)).
-
-- 🖨️ Connessione **WebSocket** alla stampante con riconnessione automatica
-- 📸 **Telegram**: testo + foto ad alta qualità su inizio/avanzamento/completamento/errori
-- 🤖 **AI leggera** (solo OpenCV, CPU-friendly): spaghetti, layer shift, distacco, fumo — con **STOP automatico** fail-safe
-- 🌐 **API REST**: status, stop/pausa/riprendi, upload GCODE, avvio stampa
-- 🏠 **Home Assistant**: MQTT discovery (sensori + pulsanti) e comandi via REST
-- 📊 **Dashboard web** minimale (SSE): stato live, progresso, grafico temperature, webcam
-- 🖥️ Pensato per CPU modeste (Celeron): nessun modello ML, solo frame differencing
-
-> Testato con: stampante a `192.168.1.56` (WS `:3030`, MJPEG `:3031`).
+Single Docker container, runs on modest hardware (a Celeron is fine), no cloud
+services, no subscriptions. Your printer, your camera frames, your data.
 
 ---
 
-## Indice
-1. [Architettura](#architettura)
-2. [Installazione rapida](#installazione-rapida)
-3. [Configurare Telegram (bot + chat_id)](#configurare-telegram)
-4. [Sicurezza: token e accesso remoto](#sicurezza)
-5. [Configurazione (config.json)](#configurazione)
-6. [Uso: API REST e comandi](#api-rest)
-7. [Home Assistant (MQTT)](#home-assistant)
-8. [AI: come funziona, taratura e disattivazione](#ai)
-9. [Test di accettazione](#test)
-10. [Troubleshooting](#troubleshooting)
+## What you get
 
----
+- **Real-time printer link** — native SDCP v3 WebSocket connection with
+  automatic reconnection, heartbeat and multi-URL failover.
+- **Telegram notifications with photos** — print started / progress milestones /
+  time-based updates / completed / failed, each with a high-quality snapshot
+  from the printer camera. Rate-limit aware, debounced, critical messages
+  (errors, AI alerts) always go through immediately.
+- **Interactive Telegram commands** — ask for status with a photo, change print
+  speed, toggle the chamber light, list files, start a print, or send a GCODE
+  file directly in the chat; destructive actions require a two-step confirm.
+- **AI print-failure detection** — a two-layer stack:
+  - a small ONNX neural network (ShuffleNetV2 encoder + prototypes, from the
+    [PrintGuard](https://github.com/oliverbravery/PrintGuard) project) scoring
+    every camera frame 0–1, and
+  - pure-OpenCV heuristics (static stringing detector, layer-shift, smoke,
+    per-layer NRMSE analysis inspired by
+    [3DPrintSaviour](https://github.com/Manicben/3DPrintSaviour)).
+- **Optional auto-stop** — on a critical AI alert the service notifies you
+  *before* acting, sends the stop command, then confirms *after* — with photos.
+  Disabled by default: you decide when to arm it.
+- **Home Assistant integration** — 18 entities via MQTT discovery (progress,
+  temperatures, AI risk, buttons, a settable speed number and a light), a
+  ready-made Lovelace dashboard, and a camera that feeds from the service
+  fan-out.
+- **Web dashboard** — lightweight SSE page with live state, progress bar,
+  temperature chart and webcam feed. No build tools, one HTML file.
+- **REST API** — status, commands, GCODE upload, snapshots, SSE event stream.
 
-## Architettura
+## How it works
 
 ```
-                    ┌────────────────────────── elegoo-notify (docker, host net) ──────────────────────────┐
-Centauri Carbon     │                                                                                     │
-  WS :3030 ◄────────┤  wsConnector ─┬─► state ─► EventBus ─┬─► progressManager ─► telegramNotifier ─► 📱     │
-  (SDCP v3)         │  (failover,   │   (eventi          ├─► aiMonitor (OpenCV) ──► auto-stop fail-safe      │
-  MJPEG :3031 ◄─────┤   heartbeat,  │    derivati)        ├─► haBridge (MQTT) ─────► Home Assistant         │
-  HTTP upload ◄──────┤   reconnect)  │                     └─► REST+SSE (:8766) ───► Dashboard              │
-                    │  printerApi ──┴─ Cmd 0/128/129/130/131/258/386…                                              │
-                    │  webcam ── una sola connessione MJPEG, fan-out a: AI, snapshot Telegram, dashboard         │
-                    └─────────────────────────────────────────────────────────────────────────────────────────────┘
+            Elegoo Centauri Carbon                elegoo-notify (Docker, host network)
+ ┌────────────────────────────────┐   ┌───────────────────────────────────────────────────┐
+ │ WS  :3030  SDCP v3 control     │◄──┤ sdcp.ws_connector  failover + heartbeat + retry  │
+ │ MJPEG :3031  camera (1 stream) │◄──┤ webcam             single stream → fan-out to    │
+ │ HTTP :3030  /uploadFile/upload │◄──┤ uploads            AI / Telegram / HA / dashboard │
+ └────────────────────────────────┘   ├───────────────────────────────────────────────────┤
+                                      │ state + event bus  derives lifecycle events from  │
+                                      │                    PrintInfo.Status transitions:  │
+                                      │                    0→10/13 = started, 9 = done,  │
+                                      │                    8+error = failed, 13 = active │
+                                      ├───────────────────────────────────────────────────┤
+                                      │ notify.progress_manager → telegram (photos)       │
+                                      │ ai.monitor  → ML score + CV detectors            │
+                                      │             → LayerWatch (per-layer NRMSE)       │
+                                      │ api.server  → REST + SSE + dashboard (:8766)      │
+                                      │ api.ha_bridge → MQTT discovery (18 entities)      │
+                                      └───────────────────────────────────────────────────┘
 ```
 
-Moduli (`app/`): `config`, `events` (bus), `state` (derivazione eventi),
-`sdcp/{protocol,ws_connector,printer_api}`, `webcam`, `uploads`,
-`notify/{telegram,progress_manager,scheduler}`, `ai/{detectors,monitor}`,
-`api/{server,ha_bridge}`, `main`.
+**Key design points**
 
-Gli **eventi non esistono** nel protocollo SDCP: vengono **derivati** dalle
-transizioni di `PrintInfo.Status` (0→1 = start, 9 = complete, 8+errore = fail…).
-Esempi completi di payload in [`docs/examples.md`](docs/examples.md).
+- The printer does **not** send "print started" events: the service derives the
+  full lifecycle from SDCP status transitions (it also handles the undocumented
+  real-firmware status code `13` = printing, and the native `Progress` field).
+- The Centauri allows **one camera client at a time**: the service opens a
+  single MJPEG connection and re-distributes frames to every consumer (AI
+  detector, Telegram photos, HA camera, dashboard).
+- The AI stack is **CPU-only**: the ML model is ~5 MB and runs once every 4 s;
+  the CV heuristics are tuned to reject the moving print head (ROI excludes the
+  gantry area) and to learn each print's own "normal" (adaptive baselines).
+  On a healthy Centauri print the ML score sits around **0.07** against a 0.6
+  alert threshold — false positives are practically ruled out, and zero were
+  observed across real prints.
 
----
+## Requirements
 
-## Installazione rapida
+- Docker + Docker Compose v2
+- An Elegoo Centauri Carbon reachable on your LAN (default `192.168.1.56`)
+- Python 3.11+ **only if** you run the tests/simulator outside Docker
+- ~150 MB RAM, negligible CPU (AI adds ~30–60 ms per frame at 480px)
 
-Prerequisiti: Docker + docker compose v2, stampante raggiungibile in LAN.
+Python dependencies (installed inside the image, see `requirements.txt`):
+`fastapi`, `uvicorn`, `websockets`, `aiohttp`, `aiomqtt`, `opencv-python-headless`,
+`numpy`, `onnxruntime` (optional at runtime — the service falls back to the CV
+stack if the model or the library is missing).
+
+## Quick start
 
 ```bash
-unzip elegoo-notify.zip && cd elegoo-notify
-./install.sh          # crea .env/config.json, build e avvio, health check
-```
+git clone https://github.com/Vayolo/elegoo-notify.git
+cd elegoo-notify
 
-oppure manualmente:
+# 1) Telegram credentials
+cp .env.example .env
+nano .env                 # set TELEGRAM_TOKEN and TELEGRAM_CHAT_ID (see below)
 
-```bash
-cp .env.example .env        # poi inserisci token/chat_id
+# 2) Configuration
 cp config.json.example config.json
-mkdir -p data/logs data/snapshots data/gcodes
+nano config.json          # adjust printer IP / MQTT broker / AI options
+
+# 3) (optional but recommended) download the ML detector models
+python3 scripts/download_models.py
+
+# 4) Build & run
 docker compose up --build -d
+curl http://127.0.0.1:8766/health
 ```
 
-Verifiche:
+Open the dashboard at `http://<host>:8766/`. Install as a service with the
+provided `systemd/elegoo-notify.service` (adjust `WorkingDirectory`, then
+`systemctl enable --now elegoo-notify`).
 
-```bash
-curl http://127.0.0.1:8766/health    # {"status":"ok","connected":true,...}
-curl http://127.0.0.1:8766/status    # snapshot completo (temperatura, progresso…)
-docker logs -f elegoo-notify        # log (anche in data/logs/elegoo-notify.log)
-```
+## Configuration
 
-Dashboard: **http://127.0.0.1:8766/**
+All settings live in `config.json` (a fully commented starting point is
+`config.json.example`); secrets live in `.env`. Environment variables always
+override the JSON file.
 
-> Il container usa `network_mode: host`: la porta `8766` è esposta direttamente
-> dalla macchina e la stampante è raggiungibile senza routing Docker.
+### Environment variables (`.env`)
 
-### systemd (avvio al boot)
-
-```bash
-sudo cp systemd/elegoo-notify.service /etc/systemd/system/
-# sistema il percorso in WorkingDirectory se diverso da /opt/elegoo-notify
-sudo systemctl daemon-reload
-sudo systemctl enable --now elegoo-notify
-```
-
----
-
-## Configurare Telegram
-
-### 1) Creare il bot (se ne usi uno dedicato)
-1. Su Telegram cerca **@BotFather** → `/newbot` → scegli nome e username.
-2. Copia il **token** (`123456:AAE…`).
-
-> Questo progetto può **riusare un bot esistente** (es. quello di Home
-> Assistant): il servizio è solo mittente (`sendMessage`/`sendPhoto`), non
-> fa polling di `getUpdates`, quindi non collide con altri client.
-
-### 2) Ottenere il chat_id
-1. Scrivi un messaggio al tuo bot.
-2. Apri `https://api.telegram.org/bot<TOKEN>/getUpdates` nel browser.
-3. Cerca `"chat":{"id":123456789,…}` → quel numero è il `TELEGRAM_CHAT_ID`.
-
-### 3) Inserire i valori
-
-```bash
-nano .env
-# TELEGRAM_TOKEN=123456:AAE-il-tuo-token
-# TELEGRAM_CHAT_ID=123456789
-```
-
-Prova immediata (senza stampare nulla):
-
-```bash
-curl -X POST http://127.0.0.1:8766/notify/test -d '{"message":"prova"}'
-curl -X POST http://127.0.0.1:8766/notify/test -d '{"photo":true}'
-```
-
-**Qualità foto**: di default si usa `sendPhoto` (anteprima in chat).
-Per il file **originale lossless** imposta in `config.json`:
-`"telegram": {"photo_mode": "document"}`.
-
-**Anti-spam**: `min_seconds_between_msgs` (default 45 s) distanzia i messaggi
-non critici; start/complete/error/AI sono **critici** e bypassano il debounce.
-Il rate limit 429 di Telegram è gestito automaticamente (retry dopo il periodo indicato).
-
----
-
-## Sicurezza
-
-- **Mai token nel repo**: `.env` è in `.gitignore`; usa Docker secrets se preferisci:
-  ```yaml
-  # docker-compose.yml (alternativa a env_file)
-  secrets:
-    tg_token:
-      file: ./secrets/tg_token.txt
-  services:
-    elegoo-notify:
-      environment:
-        TELEGRAM_TOKEN_FILE: /run/secrets/tg_token   # (leggi e popola ELEGOO_CONFIG/TOKEN)
-  ```
-- **API/Dashboard protette**: imposta `DASHBOARD_USER` e `DASHBOARD_PASSWORD`
-  in `.env` → HTTP Basic Auth su tutti gli endpoint (tranne `/health`).
-- **Accesso remoto**: usa una VPN mesh — **NordVPN Meshnet** o **Tailscale** —
-  e collega il telefono al servizio via IP mesh (es. `http://100.x.y.z:8766`).
-  Evita port-forward sul router: il servizio non cifra il traffico di per sé.
-- La stampante non esce dalla LAN: tutte le connessioni sono in locale.
-
----
-
-## Configurazione
-
-`config.json` (creato dall'example, già impostato per 192.168.1.56). Sezioni principali:
-
-| Chiave | Default | Note |
-|---|---|---|
-| `printer.ip` | `192.168.1.56` | IP della stampante |
-| `printer.ws_urls` | ws://IP:3030/websocket, /ws, :3333, /printer/ws | candidati in ordine (3030 è quello reale) |
-| `printer.status_poll_seconds` | 10 | poll Cmd 0 di sicurezza |
-| `service.port` | 8766 | porta REST/dashboard |
-| `telegram.progress_step_percent` | 10 | notifica ogni N% |
-| `telegram.notify_interval_minutes` | 30 | notifica time-based |
-| `telegram.min_seconds_between_msgs` | 45 | debounce |
-| `telegram.notify_on` / `photo_on` | vedi example | quali notifiche / con foto |
-| `webcam.mode` | `mjpeg` | `mjpeg` (:3031/video) o `snapshot` (URL JPEG) |
-| `webcam.save_snapshots` | true | salva le foto in data/snapshots |
-| `ai.enabled` | true | **disattiva l'AI se il server è sotto carico** |
-| `ai.interval_seconds` | 4 | 3–5 s consigliato (1 frame ogni N secondi) |
-| `ai.auto_stop` | true | stop automatico su alert critico |
-| `mqtt.*` | 192.168.1.50:1883 | broker per HA (vedi sotto) |
-
-Override da env: `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_DRYRUN`,
-`DASHBOARD_USER/PASSWORD`, `LOG_LEVEL`, `ELEGOO_PRINTER_IP`, `ELEGOO_CONFIG`.
-
-Dopo ogni modifica: `docker compose restart elegoo-notify`.
-
----
-
-## API REST
-
-| Endpoint | Descrizione |
+| Variable | Purpose |
 |---|---|
-| `GET /health` | stato servizio |
-| `GET /status` | stato completo stampante (JSON) |
-| `GET /photo` | snapshot JPEG fresco |
-| `GET /video` | proxy MJPEG della webcam |
-| `POST /cmd/stop` `POST /cmd/pause` `POST /cmd/resume` | comandi stampa |
-| `POST /print` | `{"filename": "x.gcode"}` avvia la stampa |
-| `POST /upload` | multipart `file`: salva in data/gcodes + trasmette alla stampante (MD5) |
-| `GET /files` | elenco GCODE locali e della stampante |
-| `GET /api/events` | SSE (eventi live per la dashboard) |
-| `POST /notify/test` | notifica Telegram di prova (opz. `"photo":true`) |
+| `TELEGRAM_TOKEN` | Bot token from [@BotFather](https://t.me/BotFather) |
+| `TELEGRAM_CHAT_ID` | Your chat id (see the [Telegram](#telegram) section) |
+| `TELEGRAM_DRYRUN` | `1` = never call the Telegram API; log messages to `data/logs/telegram_dryrun.jsonl` instead (used by the test suite) |
+| `DASHBOARD_USER` / `DASHBOARD_PASSWORD` | Enable HTTP Basic Auth on all endpoints (except `/health`) |
+| `LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `ELEGOO_PRINTER_IP` | Override the printer IP |
+| `ELEGOO_CONFIG` | Path to an alternative config file |
 
-Esempi:
+### `config.json` reference
 
-```bash
-curl -X POST http://127.0.0.1:8766/cmd/pause
-curl -F "file=@benchy.gcode" http://127.0.0.1:8766/upload
-curl -X POST http://127.0.0.1:8766/print -H 'Content-Type: application/json' -d '{"filename":"benchy.gcode"}'
-```
+| Key | Default | Description |
+|---|---|---|
+| `printer.ip` | `192.168.1.56` | Printer address |
+| `printer.ws_urls` | `ws://{ip}:3030/websocket`, `/ws`, … | WebSocket candidates, tried in order (the first is the real SDCP endpoint; `:3333` and `/printer/ws` are kept as fallbacks) |
+| `printer.http_port` | `3030` | Port for the GCODE upload endpoint |
+| `printer.status_poll_seconds` | `10` | Safety status poll (Cmd 0) on top of the printer's own pushes |
+| `printer.request_timeout_seconds` | `8` | Timeout for SDCP requests |
+| `printer.max_reconnect_backoff_seconds` | `30` | Cap for the exponential reconnect backoff |
+| `service.port` | `8766` | REST API / dashboard port |
+| `service.public_url` | `http://192.168.1.50:8766` | Base URL used in the Telegram `/link` command |
+| `telegram.photo_mode` | `photo` | `photo` (inline preview) or `document` (lossless original) |
+| `telegram.progress_step_percent` | `10` | Notify every N% of progress |
+| `telegram.notify_interval_minutes` | `30` | Time-based progress notifications |
+| `telegram.min_seconds_between_msgs` | `45` | Debounce between non-critical messages |
+| `telegram.notify_on` / `photo_on` | see example | Which events notify, and which include a photo |
+| `webcam.mode` | `mjpeg` | `mjpeg` (Centauri stream at `:3031/video`) or `snapshot` (any URL returning a JPEG) |
+| `webcam.persistent_stream` | `true` | Keep one MJPEG connection open and fan it out (recommended) |
+| `webcam.save_snapshots` | `true` | Persist notification photos to `data/snapshots` |
+| `ai.enabled` | `true` | Master switch — turn the whole AI stack off with one flag |
+| `ai.interval_seconds` | `4` | One analysed frame every N seconds (3–5 recommended) |
+| `ai.auto_stop` | `true` | Stop the print on critical alerts (fail-safe: notify before + after). Arm it only after tuning |
+| `ai.sensitivity` | `medium` | `low` / `medium` / `high` presets for the CV thresholds |
+| `ai.consecutive_frames` | `2` | Confirmations required before a CV alert fires |
+| `ai.cooldown_seconds` | `300` | Per-detector alert cooldown |
+| `ai.roi` | `[0.03, 0.33, 0.94, 0.64]` | Analysis region (x, y, w, h fractions) — excludes the gantry/head area. Verify with `/photo?roi=1` |
+| `ai.warmup_samples` | `8` | Ignore the first N frames after (re)start |
+| `ai.spaghetti_min_layer` | `7` | No stringing alerts before layer N (skirt/brim/purge look like stringing) |
+| `ai.spaghetti_baseline_factor` | `3.0` | Adaptive threshold: alert only above `baseline × factor` — each print learns its own "normal" |
+| `ai.ml.*` | see below | ML detector (model path, `threshold` 0.6, warmup) |
+| `ai.layer_watch.*` | see below | Per-layer NRMSE analysis (`min_layers` 7, `deviance_lag` 5, `thresholds`) |
+| `ai.detectors.*` | see example | Enable/disable + severity per detector (`spaghetti`, `layer_shift`, `detach`, `breakage`, `runout`, `smoke`, `ml_defect`) |
+| `mqtt.enabled` | `true` | Home Assistant MQTT discovery |
+| `mqtt.host` / `mqtt.port` | `192.168.1.50` / `1883` | Your broker (the same one Home Assistant uses) |
+| `mqtt.base_topic` | `elegoo_notify` | Topic root; commands listened on `elegoo_notify/set/#` and `elegoo_notify/cmd/#` |
+| `upload.max_size_mb` | `500` | GCODE upload size cap |
 
----
+## Telegram
+
+### One-time setup
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) → `/newbot` → copy the token.
+2. Send any message to your new bot, then open
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` and read the `chat.id`.
+3. Put both values in `.env`.
+
+The service only **sends** through the Bot API, so it can share a bot with
+Home Assistant's `telegram_bot` (which owns the polling) without conflicts —
+that is exactly how the command forwarding below works.
+
+### Interactive commands
+
+| Command | Action |
+|---|---|
+| `/status` (or `/stato`) | Full status **with photo** |
+| `/foto` | Latest webcam frame |
+| `/ai` | Detector metrics (ML score, CV severities, per-layer history) |
+| `/pause` `/resume` | Pause / resume the print |
+| `/stop` | Stop the print — requires `/stop conferma` within 2 minutes |
+| `/velocita 80` (or `/speed`) | Set print speed, 50–150% |
+| `/luce on` / `/luce off` | Chamber light on/off |
+| `/link` | Clickable links to dashboard, webcam stream, AI metrics |
+| `/file` | GCODE list (printer + local) |
+| `/stampa name.gcode` | Start a print — requires a second confirming message |
+| `/upload` | How to load a file: just attach a `.gcode` in the chat |
+
+Sending a `.gcode` file directly in the chat makes the service download it
+(via `getFile`, which does not interfere with HA's polling), store it in
+`data/gcodes`, transfer it to the printer (with MD5 verification) and reply
+with the result.
+
+### Wiring the commands through Home Assistant
+
+Home Assistant's `telegram_bot` integration owns `getUpdates`, so commands are
+forwarded by two small automations to the service, which handles everything
+and replies on its own. Ready-to-paste files are in
+[`hass/`](hass/README-ha.md): `rest_command` snippets, the forwarding
+automations, and the Lovelace dashboard.
 
 ## Home Assistant
 
-Il servizio pubblica via **MQTT discovery**: le entità compaiono
-automaticamente in HA (broker già usato da HA: `192.168.1.50:1883`).
+Point the service at the MQTT broker Home Assistant already uses and the
+entities appear automatically (MQTT discovery). Device: **Elegoo Centauri
+Carbon**.
 
-**16 entità** (device "Elegoo Centauri Carbon"):
-
-| Entità HA | Descrizione |
+| Entity | Description |
 |---|---|
-| `sensor.elegoo_centauri_carbon_avanzamento_stampa` | % di avanzamento |
-| `sensor.elegoo_centauri_carbon_tempo_rimanente` / `_tempo_trascorso` | min rimanenti / trascorsi |
-| `sensor.elegoo_centauri_carbon_temperatura_ugello` / `_piatto` / `_camera` | °C |
-| `sensor.elegoo_centauri_carbon_stato_stampante` / `_file_in_stampa` / `_velocita_stampa` | stato, file, velocità |
-| `sensor.elegoo_centauri_carbon_rischio_ai` | rischio ML 0-100% |
-| `sensor.elegoo_centauri_carbon_ultimo_alert_ai` / `_ultimo_errore` | ultimo alert / errore |
-| `binary_sensor.elegoo_centauri_carbon_in_stampa` | ON durante la stampa |
-| `button.elegoo_centauri_carbon_ferma_stampa` / `_pausa_stampa` / `_riprendi_stampa` | comandi |
-| `number.elegoo_centauri_carbon_velocita_stampa` | velocità 50-150% (settabile) |
-| `light.elegoo_centauri_carbon_luce_interna` | luce interna ON/OFF |
+| `sensor.elegoo_centauri_carbon_avanzamento_stampa` | Progress % |
+| `sensor.elegoo_centauri_carbon_tempo_rimanente` / `_tempo_trascorso` | Remaining / elapsed (min) |
+| `sensor.elegoo_centauri_carbon_temperatura_ugello` / `_piatto` / `_camera` | Nozzle / bed / chamber °C |
+| `sensor.elegoo_centauri_carbon_stato_stampante` / `_file_in_stampa` / `_velocita_stampa` | State, file, speed |
+| `sensor.elegoo_centauri_carbon_rischio_ai` | ML risk 0–100% |
+| `sensor.elegoo_centauri_carbon_ultimo_alert_ai` / `_ultimo_errore` | Last AI alert / last error |
+| `binary_sensor.elegoo_centauri_carbon_in_stampa` | ON while printing |
+| `button.elegoo_centauri_carbon_ferma_stampa` / `_pausa_stampa` / `_riprendi_stampa` | Stop / pause / resume |
+| `number.elegoo_centauri_carbon_velocita_stampa` | Settable speed 50–150% |
+| `light.elegoo_centauri_carbon_luce_interna` | Chamber light |
 
-**Dashboard dedicata "Stampante 3D"** (`http://192.168.1.50:8123/stampante-3d`):
-gauge avanzamento, webcam live, temperature, comandi, rischio AI, storico —
-YAML in `/config/dashboards/stampante3d.yaml` (rif. repo `dashboards/`).
+A ready-made dashboard (gauge, camera, temperatures, commands, AI risk,
+history and links) is provided in [`hass/dashboards/stampante3d.yaml`]
+(hass/dashboards/stampante3d.yaml). For the camera, create an **MJPEG** camera
+pointing at `http://<host>:8766/video` (the service fan-out) — *not* directly
+at the printer, which accepts a single camera client.
 
-**Webcam in HA**: config entry MJPEG `camera.stampante_3d` che punta al
-fan-out del servizio (`:8766/video`) → nessun conflitto col limite di
-1 stream della Centauri (la camera esistente `camera.3d_cam` puntava
-direttamente alla stampante e compete per lo slot: usare la nuova).
+## REST API
 
-**Comandi da HA**: pulsanti MQTT (sopra), topic `elegoo_notify/cmd/#`, o
-`rest_command` verso `http://192.168.1.50:8766/cmd/*`.
-
-Automazione HA d'esempio:
-
-```yaml
-automation:
-  - alias: Stampa 3D quasi finita
-    trigger:
-      - platform: numeric_state
-        entity_id: sensor.elegoo_centauri_carbon_avanzamento_stampa
-        above: 95
-    action:
-      - service: notify.mobile_telefono
-        data:
-          message: "Stampa 3D al 95%!"
-```
-
----
-
-## Comandi Telegram (via Home Assistant)
-
-Il polling del bot appartiene ad HA (`telegram_bot`); HA inoltra tutto al
-servizio, e la logica vive qui (risposte spedite direttamente dal nostro
-stack, foto comprese). Automazioni già pronte: `telegram_elegoo_cmd` e
-`telegram_elegoo_upload_gcode` (repo `hass/`).
-
-| Comando | Azione |
+| Endpoint | Description |
 |---|---|
-| `/status` `/stato` | stato completo **con foto** |
-| `/foto` | ultimo frame webcam |
-| `/ai` | metriche detector (ML score, CV, layer) |
-| `/pause` `/pausa` · `/resume` `/riprendi` | pausa/riprendi |
-| `/velocita 80` (o `/speed`) | velocità di stampa 50-150% |
-| `/luce on`/`/luce off` | luce interna della camera |
-| `/link` | link cliccabili a dashboard e webcam |
-| `/stop` | **ferma** (conferma: `/stop conferma`) |
-| `/file` | elenco GCODE (stampante + locali) |
-| `/stampa nome.gcode` | avvia stampa (conferma a 2 passaggi) |
-| `/upload` | istruzioni: invia il .gcode in chat |
+| `GET /health` | Service health (no auth) |
+| `GET /status` | Full printer state (JSON) |
+| `GET /photo` | Fresh camera snapshot; add `?roi=1` to overlay the AI region |
+| `GET /video` | MJPEG proxy of the printer camera |
+| `POST /cmd/stop` `/cmd/pause` `/cmd/resume` | Print control |
+| `POST /cmd/speed` | `{"percent": 80}` — set print speed |
+| `POST /cmd/light` | `{"on": true}` — chamber light |
+| `POST /upload` | Multipart GCODE → local store + printer transfer (MD5) |
+| `POST /print` | `{"filename": "x.gcode"}` — start a print |
+| `GET /files` | GCODE files on printer and local store |
+| `GET /api/events` | SSE live event stream (used by the dashboard) |
+| `GET /ai/metrics` | Live detector metrics + per-layer history |
+| `POST /ai/analyze_now` | Diagnostic: one forced analysis, returns detections + metrics |
+| `POST /notify/test` | `{"message": "…"}` / `{"photo": true}` — test the Telegram path |
 
-**Invio file**: allega un `.gcode` in chat → scarico via `getFile`,
-salvataggio in `data/gcodes`, trasferimento MD5 alla stampante, risposta
-con conferma → `/stampa nomefile.gcode` per avviare.
+## AI detection in depth
 
-Sicurezza: doppio filtro chat (allowed_chat_ids di HA + `TELEGRAM_CHAT_ID`
-del servizio); comandi distruttivi con conferma a 2 passaggi (TTL 120 s).
+**Layer 1 — ML detector (primary).** A ShuffleNetV2-x1.0 encoder (~5 MB, ONNX,
+CPU) maps each frame to a 1024-d embedding; a nearest-prototype classifier
+compares it against "success" and "failure" prototypes and produces a 0–1
+defect score (0.5 = decision boundary). Threshold: `ai.ml.threshold` (0.6).
+The preprocessing/classification/scoring are faithful ports of PrintGuard's
+`vision.py` (GPL-2.0, see [LICENSE-NOTICE](LICENSE-NOTICE)).
 
----
+**Layer 2 — CV heuristics (fallback + complementary).**
 
-## AI
+- **Spaghetti/stringing** — *static* detector (no frame differencing, so the
+  moving head produces no noise): thin structures isolated with adaptive
+  thresholding + morphology (`thresh − erode`), thinness-filtered contours and
+  non-horizontal Hough lines, evaluated **only around the print object** (the
+  skirt is masked out). An adaptive baseline learns each part's normal amount
+  of thin detail and alerts only above `baseline × 3`.
+- **Layer shift** — diagonal line segments that break the scene's dominant
+  orientation (the webcam sees the bed in perspective, so nothing is compared
+  to absolute 0°/90°).
+- **Smoke** — sharpness drop (Laplacian variance) + brightness shift in the
+  upper region, with slow-adapting baselines.
+- **LayerWatch** (one frame **per layer**, 3DPrintSaviour method) — NRMSE
+  between layer N and N−1 (*score*) and N−5 (*deviance*), computed on the
+  object region with a segmentation threshold fixed on the reference frame:
+  if the object silhouette disappears the verdict is immediate. Verdicts:
+  `detach` (score & deviance > 1.0), `breakage` (Δ > 0.2 both), `runout`
+  (flat for 6+ layers — experimental, off by default). No verdicts before
+  layer 7.
 
-**Stack v3 = ML PrintGuard + CV ibrida + LayerWatch**
+**Fail-safe auto-stop** (`ai.auto_stop`): 1) critical notification with the
+anomaly photo *before* acting → 2) `Cmd 130` stop → 3) confirmation *after*,
+with a fresh photo. If the stop fails you get an explicit
+"INTERVENI MANUALMENTE!" message.
 
-Il rilevamento primario è il **modello di PrintGuard**
-(https://github.com/oliverbravery/PrintGuard, **GPL-2.0**, vedi
-`LICENSE-NOTICE`): encoder **ShuffleNetV2-x1.0** (~5 MB, ONNX) →
-embedding 1024-d → prototipi success/failure → **score 0-1** di difetto.
-CPU-only, 1 inferenza ogni 4 s: carico trascurabile (Celeron ok).
-Soglia `ai.ml.threshold` (default 0.6). Sul telaio sano della Centauri
-lo score reale è ~0.07 (margine 8×): falsi positivi praticamente nulli.
+### Integrating the ML model
 
-**Fallback automatico**: se onnxruntime/modello mancano → solo stack CV.
-
-### Integrare il detector ML (opzionale)
-
-I binari del modello NON sono inclusi nel repo (licenza GPL-2.0 e peso):
-si scaricano con un comando dalla repo originale di PrintGuard:
+Model binaries are **not** in this repository (licence and size). One command
+fetches them from the upstream project:
 
 ```bash
-python3 scripts/download_models.py   # scarica models/{encoder_float32.onnx, prototypes.json, metadata.json}
+python3 scripts/download_models.py   # → models/encoder_float32.onnx, prototypes.json, metadata.json
 ```
 
-Poi riavvia: al via il log mostra `Modello ML caricato`. Verifiche rapide:
+Restart the service and check `docker logs` for `Modello ML caricato`
+("ML model loaded"), or `curl :8766/ai/metrics`. Without the models the
+service simply runs the CV stack.
+
+### Tuning on your own camera
 
 ```bash
-curl http://127.0.0.1:8766/ai/metrics | grep -A3 ml     # score live
-python3 tests/run_ml_test.py                            # suite ML (4 check)
+curl http://127.0.0.1:8766/ai/metrics        # ML score, CV severities vs baselines, layer history
+curl -X POST http://127.0.0.1:8766/ai/analyze_now
+curl "http://127.0.0.1:8766/photo?roi=1"     # check the ROI rectangle on a live frame
 ```
 
-Per disattivarlo del tutto: `ai.ml.enabled: false` in `config.json`.
+Values observed on a real Centauri Carbon: ML score ~0.07 on healthy prints,
+per-layer scores 0.03–0.13, stringing baseline absorbs thin-walled parts with
+zero false positives. If your camera view differs, adjust `ai.roi` and the
+sensitivity preset.
 
-**Stack v2** — zero ML pesante, tutto OpenCV, metodologie da tre progetti
-open source studiati sul campo:
+## Testing
 
-| Riferimento | Cosa abbiamo preso |
-|---|---|
-| [3DPrintSaviour](https://github.com/Manicben/3DPrintSaviour) | analisi ANCORATA AI LAYER (non al tempo): score/deviance NRMSE, nessun verdetto nei primi layer, detach/breakage/runout |
-| [PrintSight](https://github.com/bossman-lab/printsight) | detector STATICo di stringing (niente frame-diff → la testa in movimento non produce falsi): morfologia `thresh − erode` + thinness P²/4πA + Hough |
-| [PrintGuard](https://github.com/oliverbravery/PrintGuard) | filosofia: soglia tunabile, persistenza del difetto, cooldown, "guarda solo mentre stampa" |
-
-### Architettura del rilevamento
-
-1. **ROI configurabile** che esclude la fascia alta del frame dove vivono
-   gantry e testa di stampa (`ai.roi`, calibrato sulla webcam reale:
-   il movimento del carro è tutto in y 0.00–0.31)
-2. **FrameAnalyzer** (1 frame ogni 4 s, warm-up 8 campioni):
-   - **spaghetti** (critico): strutture sottili SOLO nel vicinato dell'oggetto
-     (lo skirt non conta), con **soglia adattiva**: ogni pezzo ha la sua
-     normalità di dettagli fini → si allerta solo sopra `baseline × 3`
-     (o soglia assoluta). Gate: mai sotto il layer 7 (`spaghetti_min_layer`)
-   - **layer_shift** (warning): segmenti diagonali anomali rispetto
-     all'orientamento DOMINANTE della scena (la webcam è in prospettiva,
-     mai rispetto a 0°/90° assoluti)
-   - **smoke** (warning): cadita di nitidezza + variazione luminosità,
-     con baseline adattive
-3. **LayerWatch** (metodologia 3DPrintSaviour — un frame per layer):
-   - **score** = NRMSE(layer N, N−1), **deviance** = NRMSE(N, N−5)
-     calcolati sulla REGIONE DELL'OGGETTO (soglia di segmentazione calibrata
-     sul frame di riferimento e riusata fissa: se l'oggetto sparisce, il
-     verdetto è decisivo → score 1.5)
-   - **detach** = score > 1.0 ∧ deviance > 1.0 (o silhouette mancante)
-   - **breakage** = |Δscore| > 0.2 ∧ |Δdeviance| > 0.2
-   - **runout** = stampa piatta da ≥6 layer consecutivi (**sperimentale,
-     disattivato di default**: attivalo in `ai.detectors` dopo taratura)
-
-**Fail-safe auto-stop** (`ai.auto_stop`, nel deploy attuale OFF su tua
-richiesta — nessuno stop senza il tuo OK): 1) notifica critica con foto
-*prima*, 2) `Cmd 130`, 3) notifica di conferma *dopo* (se fallisce:
-"INTERVENI MANUALMENTE!").
-
-### Taratura con i dati veri (sessione detection)
-
-Il servizio espone la diagnostica per tarare le soglie sulla TUA webcam:
-
-```bash
-curl http://127.0.0.1:8766/ai/metrics        # metriche live + storia layer
-curl -X POST http://127.0.0.1:8766/ai/analyze_now   # analisi forzata, diagnostica
-curl "http://127.0.0.1:8766/photo?roi=1"    # snapshot con rettangolo ROI
-```
-
-In `ai/metrics` trovi: `spaghetti_severity` vs `spaghetti_baseline` e la
-soglia effettiva, lo storico score/deviance per layer, i contatori.
-Dati osservati sulla Centauri reale (layer 30–43): score normali 0.03–0.13,
-deviance 0.05–0.13, baseline spaghetti ~0.10 su un pezzo "cutout" a pareti
-sottili (assorbita senza alcun falso positivo in stampa reale).
-
-**Parametri di test** (usati da `tests/run_ai_tests.py`):
-`interval=0.5, sensitivity=high, consecutive=2, warmup=2,
-spaghetti_min_layer=0, baseline_factor=1.0` + anomalie sintetiche
-(spaghetti = polilinee sottili attorno all'ugello, smoke = haze sfocato,
-detach = oggetto rimosso dal frame).
-
-**Disattivare l'AI** (server sotto carico): `"ai": {"enabled": false}`.
-Solo lo stop automatico: `"ai": {"auto_stop": false}`.
-
-
-Tutti i test girano **offline** (Telegram in dry-run) con la stampante
-simulata `tests/simulator.py`.
+Four offline acceptance suites (Telegram in dry-run, printer simulated by
+`tests/simulator.py`, no hardware needed):
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-python3 tests/run_ws_tests.py     # start/progress/complete/error → notifiche+foto, REST, upload, print (22 check)
-python3 tests/run_ai_tests.py     # spaghetti → alert critico + auto-stop fail-safe; smoke → warning (11 check)
-python3 tests/run_layer_tests.py # LayerWatch: score/deviance NRMSE per layer → detach (10 check)
+python3 tests/run_ws_tests.py      # 24 checks: events → notifications+photos, REST, upload, print
+python3 tests/run_ai_tests.py     # 11 checks: spaghetti → critical alert → auto-stop fail-safe, smoke
+python3 tests/run_layer_tests.py  # 10 checks: LayerWatch score/deviance → detach
+python3 tests/run_ml_test.py      # 4 checks: ML loads, sane scores (skips if models absent)
 ```
 
-I messaggi "Telegram" vengono registrati in `tests/out/logs/telegram_dryrun.jsonl`.
+The simulator implements the real SDCP payloads (see [docs/examples.md]
+(docs/examples.md)) including anomaly injection for AI testing.
 
-Simulatore standalone (per prova manuale della dashboard/API):
+## Security notes
 
-```bash
-python3 tests/simulator.py --port 13030
-# poi: ELEGOO_PRINTER_IP=127.0.0.1 ... a config.json → ws://127.0.0.1:13030
-curl -X POST http://127.0.0.1:13030/_sim/start -d '{"filename":"demo.gcode"}' -H 'Content-Type: application/json'
-curl -X POST http://127.0.0.1:13030/_sim/setprogress -d '{"percent":50}' -H 'Content-Type: application/json'
-```
-
-Payload WS/risposte della stampante per test offline: [`docs/examples.md`](docs/examples.md).
-
----
+- Secrets only in `.env` (git-ignored); `.env.example` contains placeholders.
+- Enable `DASHBOARD_USER`/`DASHBOARD_PASSWORD` to protect API and dashboard.
+- For remote access use a VPN (Tailscale, NordVPN Meshnet, …); do **not**
+  port-forward the service.
+- Telegram commands are double-gated (HA `allowed_chat_ids` **and** the
+  service's own chat check); destructive commands need a two-step confirm.
 
 ## Troubleshooting
 
-| Problema | Causa/rimedio |
+| Symptom | Fix |
 |---|---|
-| `/health` ok ma `connected:false` | Stampante spenta o WS irraggiungibile: controlla `curl -s http://192.168.1.56:3030` e i log (`ws_connector`). Il servizio riprova da solo con backoff. |
-| Nessuna notifica Telegram | `TELEGRAM_TOKEN/CHAT_ID` mancanti in `.env`; prova `POST /notify/test`. In dry-run (`TELEGRAM_DRYRUN=1`) niente esce: controlla il jsonl. |
-| Notifiche foto senza immagine | Webcam occupata (limite 1 stream sulla Centauri): chiudi altre app (Elegoo/Elegoo-Link) o `webcam.persistent_stream: false`. |
-| Foto nere/vecchie | `webcam.mode` errato: su Centauri usare `mjpeg` (`http://IP:3031/video`); `/webcam.jpg` NON esiste. |
-| `/cmd/*` restituisce errore | Stampante occupata (ack=1) o non connessa; `PrinterCommandError` riporta il codice. |
-| Upload fallito | Verificare MD5/rete: il simulatore esegue la stessa verifica. Il file resta comunque in `data/gcodes`. |
-| MQTT: entità assenti in HA | Broker non raggiungibile (`mqtt.host`), o discovery disattivato; controllare `docker logs` riga "MQTT connesso". |
-| CPU alta | AI troppo frequente: alza `ai.interval_seconds` o `ai.enabled:false`. OpenCV carica ~30-60 ms/frame a 480px. |
-| Porta 8766 occupata | cambia `service.port` in config.json. |
-| Log non ruotano | verificare permessi `data/logs` (`chown -R` dell'utente). |
+| `connected: false` in `/health` | Printer off or busy: the service retries with backoff; check `docker logs` |
+| No Telegram messages | Check token/chat in `.env`; try `POST /notify/test` |
+| No photos | Another client holds the only camera slot (Elegoo app?); set `webcam.persistent_stream: false` or close it |
+| MQTT entities missing in HA | Broker unreachable or discovery disabled — look for `MQTT connesso` in logs |
+| AI uses too much CPU | Raise `ai.interval_seconds` (10–15 s) or set `ai.enabled: false` |
+| Port 8766 busy | Change `service.port` |
 
-Reset completo: `docker compose down && rm -rf data/logs/* data/snapshots/*`.
+## Credits
 
----
+- **[PrintGuard](https://github.com/oliverbravery/PrintGuard)** by Oliver Bravery
+  (GPL-2.0) — the ML detector: model, prototypes and scoring.
+- **[3DPrintSaviour](https://github.com/Manicben/3DPrintSaviour)** (archived) —
+  the per-layer NRMSE methodology.
+- **[PrintSight](https://github.com/bossman-lab/printsight)** (MIT) — the static
+  thin-structure stringing heuristics.
+- **[OpenCentauri](https://docs.opencentauri.cc)** — community documentation of
+  the Centauri Carbon SDCP API.
 
-## Struttura del repo
+## License
 
-```
-elegoo-notify/
-├── app/                 # servizio (vedi Architettura)
-├── dashboard/index.html # UI minimale (SSE, vanilla JS)
-├── models/              # encoder ONNX + prototipi PrintGuard (GPL-2.0)
-├── hass/                # configurazioni Home Assistant (dashboard, automazioni)
-├── tests/               # simulatore + 4 suite di accettazione
-├── docs/examples.md     # payload SDCP per test offline
-├── config.json.example  # valori per 192.168.1.56
-├── .env.example         # token Telegram (DA completare)
-├── Dockerfile · docker-compose.yml · install.sh
-└── systemd/elegoo-notify.service
-```
-
----
-
-## Licenza
-
-**GPL-2.0-only** — vedi [LICENSE](LICENSE) e [LICENSE-NOTICE](LICENSE-NOTICE).
-Il detector ML (`app/ai/ml_detector.py`, `models/`) deriva da
-[PrintGuard](https://github.com/oliverbravery/PrintGuard) di Oliver Bravery
-(GPL-2.0): distribuendo questo software, l'intero lavoro derivato va rilasciato
-sotto GPL-2.0 con attribuzione.
+**GPL-2.0-only** — see [LICENSE](LICENSE) and [LICENSE-NOTICE](LICENSE-NOTICE).
+The ML detector (`app/ai/ml_detector.py` + models) derives from PrintGuard
+(GPL-2.0): if you redistribute this software, the whole derived work must be
+released under GPL-2.0 with attribution.

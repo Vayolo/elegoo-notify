@@ -71,6 +71,7 @@ class HaBridge:
                     log.info("MQTT connesso a %s:%d", self.host, self.port)
                     await client.publish(f"{self.base}/status", b"online", retain=True)
                     await client.subscribe(f"{self.base}/cmd/#")
+                    await client.subscribe(f"{self.base}/set/#")  # speed + light
                     if self.discovery_enabled:
                         await self._publish_discovery(client)
                     await self._publish_full_state(client)
