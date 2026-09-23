@@ -17,3 +17,12 @@ Su una NUOVA installazione: copia `dashboards/stampante3d.yaml` in
 `/config/dashboards/`, aggiungi i blocchi a `configuration.yaml`,
 crea la camera via UI (Impostazioni → Dispositivi → Aggiungi → MJPEG),
 incolla le automazioni, riavvia HA.
+
+## Luce automatica (automazione inclusa)
+
+`automations-luce-stampa.yaml`: accende la luce interna quando `binary_sensor
+...in_stampa` va ON e la spegne 5 minuti dopo che torna OFF (se una nuova
+stampa parte entro i 5 minuti il timer si azzera e la luce resta accesa).
+Incolla il contenuto in `automations.yaml` e ricarica le automazioni.
+Verificata end-to-end sulla Centauri Carbon reale (accensione al via stampa,
+spegnimento a 5:00 esatti dal termine).

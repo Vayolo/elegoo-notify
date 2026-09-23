@@ -234,6 +234,9 @@ Carbon**.
 | `number.elegoo_centauri_carbon_velocita_stampa` | Settable speed 50–150% |
 | `light.elegoo_centauri_carbon_luce_interna` | Chamber light |
 
+An example automation in `hass/automations-luce-stampa.yaml` turns the
+chamber light on when a print starts and off 5 minutes after it ends.
+
 A ready-made dashboard (gauge, camera, temperatures, commands, AI risk,
 history and links) is provided in [`hass/dashboards/stampante3d.yaml`]
 (hass/dashboards/stampante3d.yaml). For the camera, create an **MJPEG** camera
