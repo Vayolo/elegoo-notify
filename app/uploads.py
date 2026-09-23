@@ -33,6 +33,7 @@ class Uploader:
         self.max_size = int(cfg.upload.get("max_size_mb", 500)) * 1024 * 1024
         base = f"http://{cfg.printer['ip']}:{int(cfg.printer.get('http_port', 3030))}"
         self.upload_url = f"{base}/uploadFile/upload"
+        self.moonraker = None   # MoonrakerApi iniettabile (driver moonraker)
 
     # ------------------------------------------------------------------ #
     def _sanitize(self, filename: str) -> str:
@@ -74,6 +75,10 @@ class Uploader:
 
         Ritorna {"success": bool, "code": str, "messages": ...}.
         """
+        if self.moonraker is not None:
+            # Moonraker (Klipper/COSMOS): POST /server/files/upload
+            await self.moonraker.upload(path.name, path.read_bytes())
+            return {"success": True, "code": "000000", "messages": None}
         data = path.read_bytes()
         file_md5 = self.md5_of_file(path)
         last_err: Optional[str] = None

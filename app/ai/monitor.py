@@ -44,6 +44,8 @@ class AiMonitor:
         self.only_while_printing: bool = bool(ai.get("only_while_printing", True))
         self.consecutive: int = max(1, int(ai.get("consecutive_frames", 2)))
         self.cooldown: float = float(ai.get("cooldown_seconds", 300))
+        self.quiet_minutes: float = float(ai.get("quiet_minutes", 10))
+        self._quiet_until: float = 0.0
         self.detectors: dict[str, dict[str, Any]] = ai.get("detectors", {})
         self.spaghetti_min_layer: int = int(ai.get("spaghetti_min_layer", 7))
         self._spag_factor: float = float(ai.get("spaghetti_baseline_factor", 3.0))
@@ -76,12 +78,17 @@ class AiMonitor:
         # Detector ML (stack PrintGuard, GPL-2.0): fallback silenzioso a CV
         ml_cfg = ai.get("ml", {})
         self.ml_threshold: float = float(ml_cfg.get("threshold", 0.6))
+        self.ml_consecutive: int = max(1, int(ml_cfg.get("consecutive", 3)))
         self._ml_warmup_left: int = int(ml_cfg.get("warmup_samples", 8))
         self.ml: Optional[Any] = None
         if bool(ml_cfg.get("enabled", True)):
             try:
                 from .ml_detector import MlDetector
-                crop = ml_cfg.get("crop") or self.roi
+                # Il modello PrintGuard è addestrato su viste INTERE della scena:
+                # il crop (default: NESSUNO) va usato solo se si sa cosa si fa.
+                # Misurato sul campo: full frame = success confidenziale (0.17),
+                # crop = modello confuso (0.48, falso "failure").
+                crop = ml_cfg.get("crop") or None
                 self.ml = MlDetector(ml_cfg.get("model_path", "models/encoder_float32.onnx"),
                                      ml_cfg.get("prototypes_path", "models/prototypes.json"),
                                      crop=crop)
@@ -141,11 +148,16 @@ class AiMonitor:
                     try:
                         ml_res = self.ml.score_frame(frame)
                         if ml_res["score"] > self.ml_threshold:
-                            detections.append(Detection(
-                                "ml_defect", float(ml_res["score"]),
-                                f"il modello ML classifica il frame come stampa in difetto "
-                                f"(score {ml_res['score']:.2f} > {self.ml_threshold:.2f}, "
-                                f"pred {ml_res['prediction']})"))
+                            self._ml_alert_count = getattr(self, "_ml_alert_count", 0) + 1
+                            if self._ml_alert_count >= self.ml_consecutive:
+                                self._ml_alert_count = 0
+                                detections.append(Detection(
+                                    "ml_defect", float(ml_res["score"]),
+                                    f"il modello ML classifica il frame come stampa in difetto "
+                                    f"(score {ml_res['score']:.2f} > {self.ml_threshold:.2f}, "
+                                    f"pred {ml_res['prediction']}, {self.ml_consecutive} conferme)"))
+                        else:
+                            self._ml_alert_count = 0
                     except Exception as e:  # noqa: BLE001
                         log.debug("Inferenza ML fallita: %s", e)
                 self._update_counters(detections)
@@ -233,6 +245,7 @@ class AiMonitor:
             return
         self._last_alert[det.type] = now
         self._counters[det.type] = 0
+        quiet_active = time.time() < self._quiet_until
 
         title = ALERT_TITLES.get(det.type, det.type)
         log.warning("AI ALERT [%s/%s]: %s (score %.2f, %d/%d conferme)",
@@ -245,6 +258,12 @@ class AiMonitor:
             "description": det.description, "snapshot": saved,
         })
 
+        # un solo messaggio Telegram per "episodio": dopo un alert tutte le
+        # altre notifiche AI tacciono per quiet_minutes (eventi/snapshot/blog continuano)
+        self._quiet_until = time.time() + self.quiet_minutes * 60
+        if quiet_active:
+            log.info("Alert AI %s soppresso (periodo di quiete)", det.type)
+            return
         if severity == "critical" and self.auto_stop and det.type not in self._stopped_alerts:
             self._stopped_alerts.add(det.type)
             await self._critical_with_stop(title, det, jpeg)

@@ -16,6 +16,10 @@ from typing import Any
 DEFAULTS: dict[str, Any] = {
     "printer": {
         "ip": "192.168.1.56",
+        "driver": "sdcp",   # "sdcp" (firmware stock) | "moonraker" (Klipper/COSMOS)
+        "moonraker": {"port": 7125, "api_key": "",
+                      "light_on_gcode": "SET_PIN PIN=chamber_light VALUE=1",
+                      "light_off_gcode": "SET_PIN PIN=chamber_light VALUE=0"},
         "ws_urls": [
             "ws://{ip}:3030/websocket",
             "ws://{ip}:3030/ws",
@@ -63,6 +67,7 @@ DEFAULTS: dict[str, Any] = {
         "sensitivity": "medium",
         "consecutive_frames": 2,
         "cooldown_seconds": 300,
+        "quiet_minutes": 10,
         "warmup_samples": 8,
         "spaghetti_min_layer": 7,
         "spaghetti_baseline_factor": 3.0,
@@ -71,6 +76,8 @@ DEFAULTS: dict[str, Any] = {
             "model_path": "models/encoder_float32.onnx",
             "prototypes_path": "models/prototypes.json",
             "threshold": 0.6,
+            "consecutive": 3,
+            "crop": None,   # None = full frame (COME ADDESTRATO). Il crop confonde il modello!
         },
         "layer_watch": {
             "enabled": True,

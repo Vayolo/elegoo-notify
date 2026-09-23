@@ -18,9 +18,12 @@ class PrinterCommandError(Exception):
 
 
 class PrinterApi:
-    def __init__(self, connector: WsConnector, cfg):
+    def __init__(self, connector: WsConnector, cfg, moonraker=None):
         self.connector = connector
         self.cfg = cfg
+        # Driver alternativo Moonraker (Klipper/Kalico — COSMOS): se presente,
+        # i comandi vengono delegati; lo stack a valle non cambia.
+        self.moonraker = moonraker
 
     # ------------------------------------------------------------------ #
     # Helper
@@ -43,13 +46,24 @@ class PrinterApi:
     # Informazioni
     # ------------------------------------------------------------------ #
     async def refresh_status(self) -> dict[str, Any]:
-        """Cmd 0: chiede alla stampante di ripushare lo stato."""
+        """Cmd 0: chiede alla stampante di ripushare lo stato.
+        Su Moonraker è un no-op (il poller guida lo stato)."""
+        if self.moonraker is not None:
+            return {}
         return await self._request(protocol.CMD_STATUS_REFRESH)
 
     async def get_attributes(self) -> dict[str, Any]:
+        if self.moonraker is not None:
+            return {}
         return await self._request(protocol.CMD_ATTRIBUTES)
 
     async def file_list(self, url: str = "/local/") -> dict[str, Any]:
+        if self.moonraker is not None:
+            files = await self.moonraker.file_list()
+            return {"FileList": [
+                {"name": f"/local/{f.get('path', '?')}",
+                 "size": f.get("size", 0), "storageType": 0, "type": 1}
+                for f in files]}
         return await self._request(protocol.CMD_FILE_LIST, {"Url": url})
 
     async def history_list(self) -> dict[str, Any]:
@@ -62,28 +76,43 @@ class PrinterApi:
     # Controllo stampa
     # ------------------------------------------------------------------ #
     async def pause_print(self) -> None:
+        if self.moonraker is not None:
+            return await self.moonraker.pause()
         await self._request_checked(protocol.CMD_PAUSE_PRINT, ack_map=protocol.PRINT_CTRL_ACK)
 
     async def resume_print(self) -> None:
+        if self.moonraker is not None:
+            return await self.moonraker.resume()
         await self._request_checked(protocol.CMD_CONTINUE_PRINT, ack_map=protocol.PRINT_CTRL_ACK)
 
     async def stop_print(self) -> None:
+        if self.moonraker is not None:
+            return await self.moonraker.cancel()
         await self._request_checked(protocol.CMD_STOP_PRINT, ack_map=protocol.PRINT_CTRL_ACK)
 
     # ------------------------------------------------------------------ #
     # Video
     # ------------------------------------------------------------------ #
     async def enable_video(self) -> Optional[str]:
-        """Cmd 386: attiva lo stream e ritorna la VideoUrl (se presente)."""
+        """Cmd 386 (SDCP). Su Moonraker la webcam è gestita da Mainsail/
+        Fluidd: no-op."""
+        if self.moonraker is not None:
+            return None
         payload = await self._request_checked(
             protocol.CMD_VIDEO_STREAM, {"Enable": 1}, ack_map=protocol.VIDEO_ACK)
         return payload.get("VideoUrl")
 
     async def disable_video(self) -> None:
+        if self.moonraker is not None:
+            return
         await self._request_checked(
             protocol.CMD_VIDEO_STREAM, {"Enable": 0}, ack_map=protocol.VIDEO_ACK)
 
     async def set_print_speed(self, pct: int) -> dict[str, Any]:
+        if self.moonraker is not None:
+            # su Klipper la velocità di stampa è il feedrate M220
+            await self.moonraker.set_speed(int(pct))
+            return {}
         return await self._request(protocol.CMD_SET_CONFIG, {"PrintSpeedPct": int(pct)})
 
     # Limitazione NOTA del firmware Centauri Carbon: Cmd 403 con LightStatus
@@ -94,6 +123,8 @@ class PrinterApi:
                               "il comando luce non è accettato durante la stampa)"}
 
     async def set_light(self, on: bool) -> dict[str, Any]:
+        if self.moonraker is not None:
+            return {"Ack": 0, "via": "moonraker"} if (await self.moonraker.set_light(on) or True) else {}
         """Luce interna della camera (LightStatus.SecondLight, 0/1).
         Raise PrinterCommandError se il firmware rifiuta (es. in stampa)."""
         return await self._request_checked(
@@ -102,16 +133,19 @@ class PrinterApi:
             ack_map=self.LIGHT_ACK)
 
     async def start_print(self, filename: str, start_layer: int = 0) -> int:
-        """Cmd 128. Se printer.light_on_print_start (default true), accende la
-        luce interna PRIMA dello start: da idle il firmware la accetta, mentre
-        durante la stampa la rifiuterebbe (limitazione nota)."""
+        """Cmd 128 (SDCP) o /printer/print/start (Moonraker).
+        Se printer.light_on_print_start (default true), accende la luce interna
+        PRIMA dello start: da idle il firmware stock la accetta, mentre durante
+        la stampa la rifiuterebbe (limitazione nota). Su COSMOS/Klipper il pin
+        luce è controllabile sempre."""
         if bool(self.cfg.printer.get("light_on_print_start", True)):
             try:
                 await self.set_light(True)
-            except PrinterCommandError as e:
+            except Exception as e:  # noqa: BLE001
                 log.warning("Luce pre-start non impostata: %s", e)
-            except Exception:  # noqa: BLE001
-                pass
+        if self.moonraker is not None:
+            await self.moonraker.start(filename)
+            return 0
         resp = await self.connector.send_request(
             protocol.CMD_START_PRINT, {"Filename": filename, "StartLayer": start_layer})
         ack = protocol.response_ack(resp)

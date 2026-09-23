@@ -14,7 +14,14 @@
     "status_poll_seconds": 10,
     "request_timeout_seconds": 8,
     "max_reconnect_backoff_seconds": 30,
-    "light_on_print_start": true
+    "light_on_print_start": true,
+    "driver": "sdcp",
+    "moonraker": {
+      "port": 7125,
+      "api_key": "",
+      "light_on_gcode": "SET_PIN PIN=chamber_light VALUE=1",
+      "light_off_gcode": "SET_PIN PIN=chamber_light VALUE=0"
+    }
   },
   "service": {
     "host": "0.0.0.0",
@@ -122,8 +129,11 @@
       "enabled": true,
       "model_path": "models/encoder_float32.onnx",
       "prototypes_path": "models/prototypes.json",
-      "threshold": 0.6
-    }
+      "threshold": 0.6,
+      "consecutive": 3,
+      "crop": null
+    },
+    "quiet_minutes": 10
   },
   "mqtt": {
     "enabled": true,

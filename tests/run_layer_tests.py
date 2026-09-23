@@ -76,6 +76,7 @@ def make_config():
     ai.sensitivity = "medium"
     ai.consecutive_frames = 2
     ai.cooldown_seconds = 1
+    ai.quiet_minutes = 0
     ai.layer_watch = {"enabled": True, "min_layers": 3, "deviance_lag": 2,
                       "frame_delay_s": 0.2, "nozzle_mask": False,
                       "thresholds": {"detach": 1.0, "breakage_diff": 0.2, "runout": 0.2}}

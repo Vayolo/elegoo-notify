@@ -78,6 +78,7 @@ def make_config():
     cfg.ai.sensitivity = "high"
     cfg.ai.consecutive_frames = 2
     cfg.ai.cooldown_seconds = 2
+    cfg.ai.quiet_minutes = 0
     cfg.ai.warmup_samples = 2
     cfg.ai.spaghetti_min_layer = 0
     cfg.ai.spaghetti_baseline_factor = 1.0

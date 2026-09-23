@@ -143,6 +143,42 @@ class LayerWatch:
 
         boxes = blobs(cur) + blobs(ref)
         missing = (len(blobs(ref)) > 0 and len(blobs(cur)) == 0)
+        if missing:
+            # Guardia anti-transizione-luce: se la scena è cambiata di
+            # luminosità (luce interna on/off), la soglia fissa del frame di
+            # riferimento rifiuta TUTTO. Ricalibra con l'Otsu del frame
+            # corrente: se l'oggetto torna visibile NON è 'missing'.
+            t_cur = float(cv2.threshold(cur, 0, 255,
+                                         cv2.THRESH_BINARY + cv2.THRESH_OTSU)[0])
+            if abs(t_cur - t) / max(t, 1.0) > 0.15:
+                mask2 = cv2.threshold(cur, t_cur, 255, cv2.THRESH_BINARY)[1]
+                cs, _ = cv2.findContours(mask2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                reblobs = []
+                for c in cs:
+                    area = float(cv2.contourArea(c))
+                    if area < 300:
+                        continue
+                    x, y, bw, bh = cv2.boundingRect(c)
+                    if bw * bh > 0 and area < 0.20 * bw * bh:
+                        continue
+                    if x <= 1 or y <= 1 or x + bw >= w - 1 or y + bh >= h - 1:
+                        continue
+                    reblobs.append((x, y, bw, bh))
+                # il blob ricalibrato è un "oggetto" solo se è paragonabile al
+                # riferimento (dimensione ≤ 3× e centroid vicin*): altrimenti è
+                # il piatto/sfondo diventato visibile con la nuova luce
+                ref_boxes = blobs(ref)
+                ref_area = max((bw * bh) for (_, _, bw, bh) in ref_boxes) if ref_boxes else 0
+                ok_reblobs = []
+                for (x, y, bw, bh) in reblobs:
+                    if ref_area and bw * bh > 3 * ref_area:
+                        continue
+                    ok_reblobs.append((x, y, bw, bh))
+                if ok_reblobs:
+                    log.info("Transizione luminosità (Otsu %.0f→%.0f): oggetto "
+                             "di nuovo visibile, niente 'missing'", t, t_cur)
+                    boxes = ok_reblobs
+                    missing = False
         if not boxes:
             return None
         x0 = min(b[0] for b in boxes); y0 = min(b[1] for b in boxes)

@@ -20,6 +20,7 @@ from .events import EventBus
 from .logging_setup import setup_logging
 from .sdcp.printer_api import PrinterApi
 from .sdcp.ws_connector import WsConnector
+from .moonraker import MoonrakerApi, MoonrakerPoller
 from .state import PrinterState
 from .uploads import Uploader
 from .webcam import Webcam
@@ -55,6 +56,9 @@ class AppContext:
         self.uploader: Optional[Uploader] = None
         self.telegram_commands: Optional[TelegramCommandHandler] = None
 
+        self.moonraker_api: Optional[MoonrakerApi] = None
+        self.moonraker_poller: Optional[MoonrakerPoller] = None
+
         self._tasks: list[asyncio.Task] = []
         self._state_sub = None
         self._last_state_publish: float = 0.0
@@ -75,12 +79,26 @@ class AppContext:
                                          self.printer_api, self.state)
         self.progress.start()
 
+        # Driver: "sdcp" (firmware stock) oppure "moonraker" (Klipper/COSMOS).
+        # Con Moonraker: niente WS SDCP né scheduler (il poller guida lo stato),
+        # e i comandi/upload vengono delegati all'API Moonraker.
+        self.driver = str(cfg.printer.get("driver", "sdcp"))
+        if self.driver == "moonraker":
+            self.moonraker_api = MoonrakerApi(cfg, self.session)
+            self.printer_api = PrinterApi(self.connector, cfg,
+                                           moonraker=self.moonraker_api)
+            self.uploader.moonraker = self.moonraker_api
+            self.moonraker_poller = MoonrakerPoller(cfg, self.bus, self.moonraker_api)
+            self.moonraker_poller.start()
+            log.info("Driver stampante: Moonraker (Klipper/COSMOS) su %s",
+                     self.moonraker_api.base)
+        else:
+            self.scheduler = Scheduler(cfg, self.bus, self.printer_api, self.connector)
+            self.scheduler.start()
+
         self.telegram_commands = TelegramCommandHandler(
             cfg, self.state, self.printer_api, self.webcam, self.telegram,
             self.uploader, None)  # ai ref iniettato dopo la creazione dell'AI
-
-        self.scheduler = Scheduler(cfg, self.bus, self.printer_api, self.connector)
-        self.scheduler.start()
 
         self.ai = AiMonitor(cfg, self.bus, self.telegram, self.webcam,
                             self.printer_api, self.state)
@@ -96,7 +114,7 @@ class AppContext:
                                 ai_monitor=self.ai)
             self.ha.start()
 
-        if connect_printer:
+        if connect_printer and self.driver != "moonraker":
             self._tasks.append(asyncio.create_task(self.connector.run(),
                                                    name="ws-connector"))
 
@@ -115,7 +133,7 @@ class AppContext:
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
         self._tasks = []
-        for comp in (self.ai, self.scheduler, self.ha):
+        for comp in (self.ai, self.scheduler, self.ha, self.moonraker_poller):
             if comp is not None:
                 await comp.stop()
         if self.progress is not None:
