@@ -307,11 +307,19 @@ class Simulator:
                 "ErrorStatusReason": self.error_reason}]}))
         elif cmd == 403:
             if "PrintSpeedPct" in payload:
+                # la velocità è accettata anche in stampa (come da app Elegoo)
                 self.speed_pct = int(payload["PrintSpeedPct"])
-            if isinstance(payload.get("LightStatus"), dict):
-                self.light = int(payload["LightStatus"].get("SecondLight", self.light))
-            await self.push_status()
-            await self._push(ws, self.response_msg(req, {"Ack": 0}))
+                await self.push_status()
+                await self._push(ws, self.response_msg(req, {"Ack": 0}))
+            elif isinstance(payload.get("LightStatus"), dict):
+                # COME IL FIRMWARE REALE della Centauri Carbon: il comando
+                # luce è RIFIUTO (Ack=1, busy) mentre una stampa è attiva
+                if self.print_status in (1, 5, 6, 10, 13, 16):
+                    await self._push(ws, self.response_msg(req, {"Ack": 1}))
+                else:
+                    self.light = int(payload["LightStatus"].get("SecondLight", self.light))
+                    await self.push_status()
+                    await self._push(ws, self.response_msg(req, {"Ack": 0}))
         elif cmd == 386:
             data = {"Ack": 0}
             if payload.get("Enable"):

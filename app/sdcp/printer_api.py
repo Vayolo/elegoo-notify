@@ -61,13 +61,6 @@ class PrinterApi:
     # ------------------------------------------------------------------ #
     # Controllo stampa
     # ------------------------------------------------------------------ #
-    async def start_print(self, filename: str, start_layer: int = 0) -> int:
-        """Cmd 128. Ritorna l'ack (0 = ok)."""
-        resp = await self.connector.send_request(
-            protocol.CMD_START_PRINT, {"Filename": filename, "StartLayer": start_layer})
-        ack = protocol.response_ack(resp)
-        return 0 if ack is None else int(ack)
-
     async def pause_print(self) -> None:
         await self._request_checked(protocol.CMD_PAUSE_PRINT, ack_map=protocol.PRINT_CTRL_ACK)
 
@@ -93,10 +86,36 @@ class PrinterApi:
     async def set_print_speed(self, pct: int) -> dict[str, Any]:
         return await self._request(protocol.CMD_SET_CONFIG, {"PrintSpeedPct": int(pct)})
 
+    # Limitazione NOTA del firmware Centauri Carbon: Cmd 403 con LightStatus
+    # è rifiutato (Ack=1, "busy") mentre una stampa è in corso; è accettato
+    # solo a stampante ferma. Per questo start_print accende la luce
+    # PRIMA di avviare il job (vedi printer.light_on_print_start).
+    LIGHT_ACK = {0: "OK", 1: "rifiutato dal firmware (stampante occupata: "
+                              "il comando luce non è accettato durante la stampa)"}
+
     async def set_light(self, on: bool) -> dict[str, Any]:
-        """Luce interna della camera (LightStatus.SecondLight, 0/1)."""
-        return await self._request(protocol.CMD_SET_CONFIG,
-                                   {"LightStatus": {"SecondLight": 1 if on else 0}})
+        """Luce interna della camera (LightStatus.SecondLight, 0/1).
+        Raise PrinterCommandError se il firmware rifiuta (es. in stampa)."""
+        return await self._request_checked(
+            protocol.CMD_SET_CONFIG,
+            {"LightStatus": {"SecondLight": 1 if on else 0}},
+            ack_map=self.LIGHT_ACK)
+
+    async def start_print(self, filename: str, start_layer: int = 0) -> int:
+        """Cmd 128. Se printer.light_on_print_start (default true), accende la
+        luce interna PRIMA dello start: da idle il firmware la accetta, mentre
+        durante la stampa la rifiuterebbe (limitazione nota)."""
+        if bool(self.cfg.printer.get("light_on_print_start", True)):
+            try:
+                await self.set_light(True)
+            except PrinterCommandError as e:
+                log.warning("Luce pre-start non impostata: %s", e)
+            except Exception:  # noqa: BLE001
+                pass
+        resp = await self.connector.send_request(
+            protocol.CMD_START_PRINT, {"Filename": filename, "StartLayer": start_layer})
+        ack = protocol.response_ack(resp)
+        return 0 if ack is None else int(ack)
 
     async def set_fan_speed(self, model: int | None = None, auxiliary: int | None = None,
                             box: int | None = None) -> dict[str, Any]:

@@ -215,7 +215,17 @@ class TelegramCommandHandler:
             await self._reply("💡 Luce interna <b>accesa</b>" if on
                               else "🌑 Luce interna <b>spenta</b>", kind="tg_light")
         except Exception as e:  # noqa: BLE001
-            await self._reply(f"⚠️ Comando luce fallito: {e}")
+            msg = str(e)
+            if "rifiutato dal firmware" in msg or "occupata" in msg:
+                await self._reply(
+                    "⚠️ <b>Il firmware della Centauri rifiota i comandi luce "
+                    "durante la stampa.</b>\n"
+                    "Opzioni: accendila dal display della stampante, oppure "
+                    "avvia le stampe da qui (/stampa): la luce viene accesa "
+                    "PRIMA del via e resta accesa per tutta la stampa.",
+                    kind="tg_light_denied")
+            else:
+                await self._reply(f"⚠️ Comando luce fallito: {e}")
 
     async def _cmd_link(self) -> None:
         base = self.cfg.service.get("public_url") or "http://192.168.1.50:8766"

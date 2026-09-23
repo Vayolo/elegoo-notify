@@ -193,6 +193,8 @@ def create_app(ctx) -> FastAPI:
             await ctx.printer_api.set_light(on)
             ctx.bus.publish("remote_command", {"command": "light", "value": on})
             return {"ok": True, "command": "light", "on": on}
+        except PrinterCommandError as e:
+            raise HTTPException(502, str(e)) from e
         except (ConnectionError, asyncio.TimeoutError, TimeoutError) as e:
             raise HTTPException(503, f"stampante non raggiungibile: {e}") from e
 

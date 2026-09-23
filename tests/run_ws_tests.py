@@ -226,19 +226,26 @@ async def main() -> int:
             pass
         check("Stampa da /print attiva sullo stato", ctx.state.is_printing)
 
-        # velocità e luce via REST (Cmd 403 sul simulatore)
+        # velocità in stampa: accettata (Cmd 403)
         async with session.post(f"{API}/cmd/speed", json={"percent": 80}) as r:
             j = await r.json()
-        check("REST /cmd/speed imposta la velocità",
+        check("REST /cmd/speed imposta la velocità (anche in stampa)",
               r.status == 200 and j.get("ok") is True and any(
                   c["cmd"] == 403 and c["data"].get("PrintSpeedPct") == 80
                   for c in sim.commands), f"{j}")
-        async with session.post(f"{API}/cmd/light", json={"on": False}) as r:
+        # luce DURANTE la stampa: il firmware rifiuta (limitazione reale Centauri)
+        async with session.post(f"{API}/cmd/light", json={"on": True}) as r:
             j = await r.json()
-        check("REST /cmd/light spegne la luce",
-              r.status == 200 and j.get("ok") is True and any(
-                  c["cmd"] == 403 and (c["data"].get("LightStatus") or {}).get("SecondLight") == 0
-                  for c in sim.commands), f"{j}")
+        check("Luce in stampa RIFIUTATA dal firmware (Ack=1, come il reale)",
+              r.status == 502 and "rifiutato" in (j.get("detail") or ""),
+              f"status={r.status} {j}")
+        # pre-hook: start_print ha acceso la luce PRIMA del Cmd 128
+        idx_light = next((i for i, c in enumerate(sim.commands)
+                          if c["cmd"] == 403 and isinstance(c["data"].get("LightStatus"), dict)), None)
+        idx_start = next((i for i, c in enumerate(sim.commands) if c["cmd"] == 128), None)
+        check("Pre-hook: luce accesa PRIMA dello start print",
+              idx_light is not None and idx_start is not None and idx_light < idx_start,
+              f"light@{idx_light} start@{idx_start}")
 
         async with session.post(f"{API}/cmd/stop") as r:
             j = await r.json()
@@ -249,6 +256,12 @@ async def main() -> int:
         except TimeoutError:
             pass
         check("Stato coerente post-stop (non in job)", not ctx.state.job_active)
+
+        # luce a stampante ferma: accettata
+        async with session.post(f"{API}/cmd/light", json={"on": False}) as r:
+            j = await r.json()
+        check("Luce a stampante FERMA accettata",
+              r.status == 200 and j.get("ok") is True and sim.light == 0, f"{j}")
 
         async with session.get(f"{API}/photo") as r:
             photo_ok = r.status == 200 and len(await r.read()) > 500

@@ -15,7 +15,7 @@ from typing import Any, Optional
 PRINT_STATUS_NAMES = {
     0: "idle", 1: "printing", 2: "dropping", 3: "exposing", 4: "lifting",
     5: "pausing", 6: "paused", 7: "stopping", 8: "stopped", 9: "complete",
-    10: "file_checking", 13: "printing",
+    10: "file_checking", 13: "printing", 16: "heating",
 }
 MACHINE_STATUS_NAMES = {0: "idle", 1: "printing", 2: "transferring", 3: "calibrating", 4: "testing"}
 

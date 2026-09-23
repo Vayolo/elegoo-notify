@@ -26,6 +26,7 @@ DEFAULTS: dict[str, Any] = {
         "http_port": 3030,
         "mainboard_id": None,
         "discovery_enabled": False,
+        "light_on_print_start": True,
         "status_poll_seconds": 10,
         "request_timeout_seconds": 8,
         "max_reconnect_backoff_seconds": 30,

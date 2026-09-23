@@ -196,7 +196,7 @@ that is exactly how the command forwarding below works.
 | `/pause` `/resume` | Pause / resume the print |
 | `/stop` | Stop the print — requires `/stop conferma` within 2 minutes |
 | `/velocita 80` (or `/speed`) | Set print speed, 50–150% |
-| `/luce on` / `/luce off` | Chamber light on/off |
+| `/luce on` / `/luce off` | Chamber light on/off — see the [firmware note](#firmware-quirk-light-during-print) below |
 | `/link` | Clickable links to dashboard, webcam stream, AI metrics |
 | `/file` | GCODE list (printer + local) |
 | `/stampa name.gcode` | Start a print — requires a second confirming message |
@@ -214,6 +214,22 @@ forwarded by two small automations to the service, which handles everything
 and replies on its own. Ready-to-paste files are in
 [`hass/`](hass/README-ha.md): `rest_command` snippets, the forwarding
 automations, and the Lovelace dashboard.
+
+### Firmware quirk: light during print
+
+The Centauri Carbon firmware **rejects remote light commands while a print
+is running** (SDCP `Cmd 403` with `LightStatus` returns `Ack=1`, "busy" —
+verified on the real printer; the full SDCP spec has no other light command).
+Consequences:
+
+- `light.turn_on` from HA/Telegram during a print is refused: the service
+  surfaces a clear error instead of failing silently.
+- For prints started **through elegoo-notify** (`/stampa`, REST `/print`,
+  HA `button`) the service turns the light on **before** starting the job
+  (idle = accepted) via `printer.light_on_print_start` (default `true`).
+- The off path (5 min after print end, printer idle) always works.
+- For prints started from the printer screen the light can be toggled from
+  the printer's own display.
 
 ## Home Assistant
 
