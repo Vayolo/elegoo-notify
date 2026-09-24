@@ -129,7 +129,8 @@ class MoonrakerApi:
 
     # ------------------------------------------------------------------ #
     DEFAULT_OBJECTS = ["print_stats", "extruder", "heater_bed",
-                       "display_status", "temperature_sensor chamber"]
+                       "display_status", "temperature_sensor chamber",
+                       "led case"]
 
     async def query_objects(self) -> dict[str, Any]:
         """Interroga gli oggetti Klipper. Se un oggetto non esiste (es.
@@ -231,6 +232,11 @@ class MoonrakerPoller:
                 if not self._connected_once:
                     self._connected_once = True
                     self.bus.publish("printer_connected", {"url": self.api.base})
+                # luce REALE dall'oggetto Klipper [led case] (bianco > 0.05 = ON)
+                led = objects.get("led case") or {}
+                cd = led.get("color_data") or []
+                if cd and isinstance(cd[0], (list, tuple)) and len(cd[0]) >= 4:
+                    self.api.light = float(cd[0][3]) > 0.05
                 failures = 0
                 payload = synthetic_sdcp_status(objects, self.api.light)
                 self.bus.publish("sdcp_status", {"payload": payload, "moonraker": True})
@@ -239,6 +245,10 @@ class MoonrakerPoller:
             except Exception as e:  # noqa: BLE001
                 failures += 1
                 if self._connected_once and failures == 1:
+                    # reset: alla prossima query riuscita va ripubblicato
+                    # 'printer_connected' (es. restart di Klipper dopo
+                    # SAVE_CONFIG durante la calibrazione COSMOS)
+                    self._connected_once = False
                     self.bus.publish("printer_disconnected", {"reason": str(e)})
                 log.debug("Poll Moonraker fallito (%d): %s", failures, e)
             await asyncio.sleep(self.poll_seconds)
