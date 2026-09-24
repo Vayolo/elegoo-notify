@@ -48,6 +48,10 @@ def create_app(ctx) -> FastAPI:
     vendor_dir = Path(__file__).resolve().parents[2] / "dashboard" / "vendor"
     if vendor_dir.is_dir():
         app.mount("/vendor", StaticFiles(directory=str(vendor_dir)), name="vendor")
+    # asset statici della webui v2 (css/js/font/icone)
+    assets_dir = Path(__file__).resolve().parents[2] / "dashboard" / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
     cfg = ctx.cfg
 
     # ------------------------------------------------------------------ #
@@ -353,6 +357,27 @@ def create_app(ctx) -> FastAPI:
         if job is None:
             raise HTTPException(404, "job non trovato")
         return job.public()
+
+    @app.get("/snapshots", dependencies=[Depends(require_auth)])
+    async def snapshots_list() -> dict:
+        """Elenco degli snapshot salvati (foto delle notifiche e degli alert AI)."""
+        import os
+        d = ctx.webcam.snapshot_dir
+        out = []
+        if d.is_dir():
+            for f in sorted(d.glob("*.jpg"), key=lambda p: -p.stat().st_mtime)[:60]:
+                st = f.stat()
+                out.append({"name": f.name, "size": st.st_size, "mtime": st.st_mtime})
+        return {"snapshots": out}
+
+    @app.get("/snapshots/{name}", dependencies=[Depends(require_auth)])
+    async def snapshots_get(name: str):
+        """Serve uno snapshot (nome sanificato: nessun path traversal)."""
+        safe = Path(name).name
+        p = ctx.webcam.snapshot_dir / safe
+        if not p.is_file() or p.suffix.lower() != ".jpg":
+            raise HTTPException(404, "snapshot non trovato")
+        return FileResponse(p, media_type="image/jpeg", filename=safe)
 
     @app.post("/telegram/cmd", dependencies=[Depends(require_auth)])
     async def telegram_cmd(body: dict) -> dict:
