@@ -378,7 +378,9 @@ function pollJob(id){
 }
 async function cmdPrint(name){
   try{const r=await jfetch('/print',{method:'POST',body:JSON.stringify({filename:name})});
-    const j=await r.json();alert(j.ok?'▶️ stampa avviata: '+name:'❌ '+(j.error||('ack '+j.ack)));}
+    const j=await r.json();
+    alert(j.ok?'▶️ stampa avviata: '+name:
+      '❌ avvio rifiutato: '+(j.error||j.detail||(j.ack!==undefined?('codice stampante '+j.ack):'stampante non raggiungibile')));}
   catch(e){alert('errore avvio: '+e)}
 }
 refreshModels();
