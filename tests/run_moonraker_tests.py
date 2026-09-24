@@ -62,8 +62,8 @@ def make_config():
     cfg.printer.ip = "127.0.0.1"
     cfg.printer.driver = "moonraker"
     cfg.printer.moonraker = {"port": MR_PORT, "api_key": "",
-                             "light_on_gcode": "SET_PIN PIN=chamber_light VALUE=1",
-                             "light_off_gcode": "SET_PIN PIN=chamber_light VALUE=0"}
+                             "light_on_gcode": "SET_LED LED=case WHITE=1",
+                             "light_off_gcode": "SET_LED LED=case WHITE=0"}
     cfg.printer.status_poll_seconds = 1
     cfg.webcam.mode = "mjpeg"
     cfg.webcam.mjpeg_url = f"{MR}/video"
@@ -115,10 +115,10 @@ async def main() -> int:
         check("Stato 'printing' propagato (print_stats→SDCP sintetico)",
               ctx.state.is_printing)
         light_gcode_idx = next((i for i, g in enumerate(sim.gcode_scripts)
-                                if "VALUE=1" in g["script"]), None)
+                                if g["script"].upper().startswith("SET_LED") and "WHITE=1" in g["script"].upper()), None)
         start_idx = next((i for i, c in enumerate(sim.calls)
                           if c["ep"] == "print/start"), None)
-        check("Pre-hook luce: gcode SET_PIN PRIMA dello start (su COSMOS la luce funziona sempre)",
+        check("Pre-hook luce: gcode SET_LED PRIMA dello start (su COSMOS la luce funziona sempre)",
               light_gcode_idx is not None and start_idx is not None
               and sim.gcode_scripts[light_gcode_idx]["ts"] < sim.calls[start_idx]["ts"])
         try:
@@ -159,9 +159,9 @@ async def main() -> int:
         async with session.post(f"{API}/cmd/light",
                                 json={"on": True}) as r:
             j = await r.json()
-        check("Luce via Moonraker: gcode SET_PIN accettato (niente Ack=1!)",
+        check("Luce via Moonraker: gcode SET_LED accettato (niente Ack=1!)",
               r.status == 200 and j.get("ok") is True
-              and any("VALUE=1" in g["script"] for g in sim.gcode_scripts), f"{j}")
+              and any("SET_LED" in g["script"] for g in sim.gcode_scripts), f"{j}")
 
         # 6) velocità: M220
         async with session.post(f"{API}/cmd/speed",

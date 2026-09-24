@@ -78,12 +78,15 @@ def synthetic_sdcp_status(objects: dict[str, Any],
             "CurrentLayer": 0, "TotalLayer": 0,
         }
 
+    chamber = objects.get("temperature_sensor chamber") or {}
     status: dict[str, Any] = {
         "CurrentStatus": [machine],
         "TempOfNozzle": ext.get("temperature"),
         "TempTargetNozzle": ext.get("target"),
         "TempOfHotbed": bed.get("temperature"),
         "TempTargetHotbed": bed.get("target"),
+        "TempOfBox": chamber.get("temperature"),
+        "TempTargetBox": 0,
         "PrintSpeed": 100,
         "PrintInfo": print_info,
     }
@@ -100,10 +103,13 @@ class MoonrakerApi:
         m = cfg.printer.get("moonraker", {})
         self.base = f"http://{cfg.printer['ip']}:{int(m.get('port', 7125))}"
         self.api_key = m.get("api_key") or ""
-        self.light_on_gcode = m.get("light_on_gcode", "SET_PIN PIN=chamber_light VALUE=1")
-        self.light_off_gcode = m.get("light_off_gcode", "SET_PIN PIN=chamber_light VALUE=0")
+        # COSMOS espone la luce come [led case] (Klipper LED, dimmerabile):
+        # SET_LED LED=case WHITE=0..1
+        self.light_on_gcode = m.get("light_on_gcode", "SET_LED LED=case WHITE=1")
+        self.light_off_gcode = m.get("light_off_gcode", "SET_LED LED=case WHITE=0")
         self.session = session
         self.light: Optional[bool] = None
+        self._objects_cache: Optional[list] = None
 
     def _headers(self) -> dict[str, str]:
         h = {"Content-Type": "application/json"}
@@ -122,11 +128,28 @@ class MoonrakerApi:
             return body
 
     # ------------------------------------------------------------------ #
+    DEFAULT_OBJECTS = ["print_stats", "extruder", "heater_bed",
+                       "display_status", "temperature_sensor chamber"]
+
     async def query_objects(self) -> dict[str, Any]:
-        body = await self._post("/printer/objects/query", {
-            "objects": {"print_stats": None, "extruder": None,
-                        "heater_bed": None, "display_status": None}})
-        return body.get("status") or {}
+        """Interroga gli oggetti Klipper. Se un oggetto non esiste (es.
+        'temperature_sensor chamber' su stampanti senza sensore camera),
+        ripiega progressivamente finché trova un sottoinsieme valido."""
+        objects = list(self._objects_cache or self.DEFAULT_OBJECTS)
+        while objects:
+            body = await self._post("/printer/objects/query",
+                                    {"objects": {o: None for o in objects}})
+            # Moonraker incapsula le risposte in {"result": {...}} (il test
+            # con il fake che non wrappava ha mascherato questo bug!)
+            payload = body.get("result") or body
+            if "status" in payload:
+                self._objects_cache = objects
+                return payload["status"]
+            # rimuove l'ultimo oggetto (i core vengono prima) e riprova
+            if len(objects) == 1:
+                raise ConnectionError(f"query oggetti Klipper fallita: {body}")
+            objects = objects[:-1]
+        return {}
 
     async def send_gcode(self, script: str) -> None:
         await self._post("/printer/gcode/script", {"script": script})

@@ -63,6 +63,7 @@ def make_config():
            "TELEGRAM_DRYRUN": "1"}
     cfg = load_config(environ=env)
     cfg.printer.ip = "127.0.0.1"
+    cfg.printer.driver = "sdcp"  # isola dal config.json di produzione
     cfg.printer.ws_urls = [f"ws://127.0.0.1:{SIM_PORT}/websocket"]
     cfg.printer.http_port = SIM_PORT
     cfg.printer.status_poll_seconds = 1

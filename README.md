@@ -271,14 +271,28 @@ elegoo-notify speaks **two printer dialects**, selected with `printer.driver`:
 | Speed | Cmd 403 `PrintSpeedPct` | `M220` |
 | Status | printer pushes → events derived | poller translates `print_stats`/objects into SDCP-like payloads → **the whole stack downstream is unchanged** |
 
-Switch by setting in `config.json`:
+Switch by setting in `config.json` (values verified on a real COSMOS install —
+Moonraker is proxied on port **80** behind the Mainsail nginx, the light is
+the Klipper LED object `[led case]` and is **dimmable**, the camera is the
+standard Mainsail MJPEG):
 
 ```json
 "printer": {"ip": "192.168.1.56", "driver": "moonraker",
-            "moonraker": {"port": 7125, "api_key": "",
-                          "light_on_gcode": "SET_PIN PIN=chamber_light VALUE=1",
-                          "light_off_gcode": "SET_PIN PIN=chamber_light VALUE=0"}}
+            "moonraker": {"port": 80, "api_key": "",
+                          "light_on_gcode": "SET_LED LED=case WHITE=1",
+                          "light_off_gcode": "SET_LED LED=case WHITE=0"}},
+"webcam": {"mode": "mjpeg",
+           "mjpeg_url": "http://192.168.1.56/webcam/?action=stream",
+           "snapshot_url": "http://192.168.1.56/webcam/?action=snapshot"}
 ```
+
+On COSMOS the printer also exposes `temperature_sensor chamber` (mapped to
+the chamber-temperature sensor like the stock did) and **the firmware-quirk
+light limitation disappears**: light control works during prints, with
+dimming (`SET_LED LED=case WHITE=0.5`). Slicer profiles switch automatically
+to `slicer-profiles/centauri_carbon_cosmos/` (minimal Klipper start g-code —
+COSMOS handles homing/adaptive purge/mesh/heat-soak itself; the stock
+M729/M6211 commands would trigger an emergency stop).
 
 **Is COSMOS worth it?** For tinkerers: full Klipper ecosystem (bed mesh in the
 webUI, input shaper, adaptive meshing, CANVAS/AFC multi-material, exhaust fan,

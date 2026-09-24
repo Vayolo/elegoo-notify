@@ -55,7 +55,7 @@ class MoonrakerSim:
 
         async def h_query(request):
             self.calls.append({"ep": "objects/query", "ts": time.time()})
-            return web.json_response({"status": {
+            return web.json_response({"result": {"status": {
                 "print_stats": self._print_stats(),
                 "extruder": {"temperature": 210.0 if self.state == "printing" else 24.0,
                              "target": 210.0 if self.state == "printing" else 0.0},
@@ -63,7 +63,8 @@ class MoonrakerSim:
                                "target": 60.0 if self.state == "printing" else 0.0},
                 "display_status": {"progress": round(self.progress, 3)
                                     if self.state in ("printing", "paused") else 0.0},
-            }})
+                "temperature_sensor chamber": {"temperature": 31.5},
+            }}})
 
         async def h_start(request):
             j = await body(request)

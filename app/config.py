@@ -17,9 +17,9 @@ DEFAULTS: dict[str, Any] = {
     "printer": {
         "ip": "192.168.1.56",
         "driver": "sdcp",   # "sdcp" (firmware stock) | "moonraker" (Klipper/COSMOS)
-        "moonraker": {"port": 7125, "api_key": "",
-                      "light_on_gcode": "SET_PIN PIN=chamber_light VALUE=1",
-                      "light_off_gcode": "SET_PIN PIN=chamber_light VALUE=0"},
+        "moonraker": {"port": 80, "api_key": "",
+                      "light_on_gcode": "SET_LED LED=case WHITE=1",
+                      "light_off_gcode": "SET_LED LED=case WHITE=0"},
         "ws_urls": [
             "ws://{ip}:3030/websocket",
             "ws://{ip}:3030/ws",

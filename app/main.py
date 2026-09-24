@@ -29,6 +29,7 @@ from .notify.progress_manager import ProgressManager
 from .notify.scheduler import Scheduler
 from .ai.monitor import AiMonitor
 from .telegram_commands import TelegramCommandHandler
+from pathlib import Path
 from .models import ModelStore, Slicer
 from .api.ha_bridge import HaBridge
 from .api.server import create_app
@@ -99,8 +100,19 @@ class AppContext:
             self.scheduler = Scheduler(cfg, self.bus, self.printer_api, self.connector)
             self.scheduler.start()
 
-        # Modelli 3D + slicing on-the-go (PrusaSlicer CLI, opzionale)
+        # Modelli 3D + slicing on-the-go (PrusaSlicer CLI, opzionale).
+        # Profili: COSMOS/Klipper ha start-gcode DIVERSO (no M729/M6211:
+        # COSMOS li rifiuta con emergency stop; la macchina fa da sé
+        # homing/purge/mesh) → directory dedicata per driver moonraker.
         self.models = ModelStore(cfg)
+        if str(cfg.printer.get("driver", "sdcp")) == "moonraker":
+            base_dir = str(cfg.slicer.get("profiles_dir",
+                                          "slicer-profiles/centauri_carbon"))
+            cosmos_dir = Path(base_dir.replace("centauri_carbon",
+                                               "centauri_carbon_cosmos"))
+            if cosmos_dir.is_dir():
+                cfg.slicer["profiles_dir"] = str(cosmos_dir)
+                log.info("Profili slicer COSMOS: %s", cosmos_dir)
         self.slicer = Slicer(cfg, self.models)
 
         async def _transfer_after_slice(job, gcode_path):
