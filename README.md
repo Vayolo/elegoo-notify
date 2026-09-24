@@ -304,9 +304,13 @@ the printer → start, all from the browser.
   and (if `transfer`) is MD5-uploaded to the printer, ready for
   `POST /print` or the Telegram `/stampa` command.
 - Engine: **PrusaSlicer 2.8.1** CLI (AGPL-3.0, see LICENSE-NOTICE) bundled
-  in the Docker image, with hand-written Centauri Carbon profiles in
-  `slicer-profiles/centauri_carbon/` (PLA 215/60, PETG 240/80, conservative
-  speeds). Tune `printer.ini` start/end g-code to taste.
+  in the Docker image. Profiles in `slicer-profiles/centauri_carbon/` are
+  derived from the **official Elegoo Centauri Carbon profiles** shipped in
+  OrcaSlicer (`resources/profiles/Elegoo`): the real start/end g-code
+  (M729 nozzle clean, M6211, M83 relative extrusion, prime lines,
+  M749 shutdown sequence) and the official speeds (outer 160 / inner 200 /
+  infill 200 / solid 250 mm/s, travel 500, first layer 50), PLA 210/60,
+  PETG 240/70.
 - Not installed? Every slicing endpoint degrades gracefully (501) and the
   rest of the service keeps working.
 - Expect a benchy in ~2-6 min on a Celeron-class CPU; big models queue.

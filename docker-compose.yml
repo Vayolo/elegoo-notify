@@ -13,4 +13,5 @@ services:
       - ./data/logs:/app/data/logs
       - ./data/snapshots:/app/data/snapshots
       - ./data/gcodes:/app/data/gcodes
+      - ./data/models:/app/data/models
     restart: unless-stopped

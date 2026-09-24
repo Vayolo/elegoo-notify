@@ -27,6 +27,7 @@ import numpy as np
 
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from ..sdcp.printer_api import PrinterCommandError
@@ -43,6 +44,10 @@ security = HTTPBasic(auto_error=False)
 def create_app(ctx) -> FastAPI:
     app = FastAPI(title="elegoo-notify", version="1.0.0",
                   docs_url=None, redoc_url=None, openapi_url=None)
+    # vendor JS per la dashboard (three.js & co) — prima mancava il mount!
+    vendor_dir = Path(__file__).resolve().parents[2] / "dashboard" / "vendor"
+    if vendor_dir.is_dir():
+        app.mount("/vendor", StaticFiles(directory=str(vendor_dir)), name="vendor")
     cfg = ctx.cfg
 
     # ------------------------------------------------------------------ #
