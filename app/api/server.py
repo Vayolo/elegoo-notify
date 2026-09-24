@@ -278,6 +278,71 @@ def create_app(ctx) -> FastAPI:
     # ------------------------------------------------------------------ #
     # Notifica di prova
     # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------ #
+    # Modelli 3D & slicing on-the-go
+    # ------------------------------------------------------------------ #
+    @app.get("/models", dependencies=[Depends(require_auth)])
+    async def models_list() -> dict:
+        return {"models": ctx.models.list()}
+
+    @app.post("/models", dependencies=[Depends(require_auth)])
+    async def models_upload(file: UploadFile) -> dict:
+        max_size = int(cfg.models.get("max_size_mb", 200)) * 1024 * 1024
+        data = bytearray()
+        while chunk := await file.read(1024 * 1024):
+            data.extend(chunk)
+            if len(data) > max_size:
+                raise HTTPException(413, "modello troppo grande")
+        try:
+            path = await asyncio.to_thread(ctx.models.save,
+                                           file.filename or "model.stl",
+                                           bytes(data))
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return {"ok": True, "name": path.name, "size": path.stat().st_size}
+
+    @app.get("/models/{name}", dependencies=[Depends(require_auth)])
+    async def models_get(name: str):
+        p = ctx.models.path(name)
+        if p is None:
+            raise HTTPException(404, "modello non trovato")
+        media = {"stl": "model/stl", "3mf": "model/3mf",
+                 "obj": "model/obj"}.get(p.suffix.lstrip(".").lower(), "application/octet-stream")
+        return FileResponse(p, media_type=media, filename=p.name)
+
+    @app.delete("/models/{name}", dependencies=[Depends(require_auth)])
+    async def models_delete(name: str) -> dict:
+        return {"ok": ctx.models.delete(name)}
+
+    @app.post("/models/{name}/slice", dependencies=[Depends(require_auth)])
+    async def models_slice(name: str, body: dict) -> dict:
+        if not await ctx.slicer.check_available():
+            raise HTTPException(501, "slicer non installato "
+                                     f"({ctx.slicer.binary}): vedi README § Slicing")
+        if ctx.models.path(name) is None:
+            raise HTTPException(404, "modello non trovato")
+        try:
+            job = ctx.slicer.create_job(name,
+                                        material=body.get("material", "pla"),
+                                        layer_height=float(body.get("layer_height", 0.2)),
+                                        infill=int(body.get("infill", 15)),
+                                        supports=bool(body.get("supports", False)),
+                                        transfer=bool(body.get("transfer", True)))
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return {"ok": True, "job": job.public()}
+
+    @app.get("/slice/jobs", dependencies=[Depends(require_auth)])
+    async def slice_jobs() -> dict:
+        return {"jobs": ctx.slicer.list_jobs(), "slicer_available": await ctx.slicer.check_available()}
+
+    @app.get("/slice/jobs/{job_id}", dependencies=[Depends(require_auth)])
+    async def slice_job(job_id: str) -> dict:
+        job = ctx.slicer.job(job_id)
+        if job is None:
+            raise HTTPException(404, "job non trovato")
+        return job.public()
+
     @app.post("/telegram/cmd", dependencies=[Depends(require_auth)])
     async def telegram_cmd(body: dict) -> dict:
         """Inoltro da Home Assistant di un comando Telegram (il polling sta su HA).

@@ -107,9 +107,16 @@ DEFAULTS: dict[str, Any] = {
         "discovery_prefix": "homeassistant",
         "discovery_enabled": True,
     },
-    "paths": {"logs": "data/logs", "snapshots": "data/snapshots", "gcodes": "data/gcodes"},
+    "paths": {"logs": "data/logs", "snapshots": "data/snapshots",
+              "gcodes": "data/gcodes", "models": "data/models"},
     "logging": {"level": "INFO", "max_bytes": 10485760, "backups": 5},
     "upload": {"max_size_mb": 500},
+    "models": {"max_size_mb": 200},
+    "slicer": {
+        "path": "prusa-slicer",
+        "profiles_dir": "slicer-profiles/centauri_carbon",
+        "timeout_seconds": 1800,
+    },
 }
 
 

@@ -29,6 +29,7 @@ from .notify.progress_manager import ProgressManager
 from .notify.scheduler import Scheduler
 from .ai.monitor import AiMonitor
 from .telegram_commands import TelegramCommandHandler
+from .models import ModelStore, Slicer
 from .api.ha_bridge import HaBridge
 from .api.server import create_app
 
@@ -54,6 +55,8 @@ class AppContext:
         self.ai: Optional[AiMonitor] = None
         self.ha: Optional[HaBridge] = None
         self.uploader: Optional[Uploader] = None
+        self.models: Optional[ModelStore] = None
+        self.slicer: Optional[Slicer] = None
         self.telegram_commands: Optional[TelegramCommandHandler] = None
 
         self.moonraker_api: Optional[MoonrakerApi] = None
@@ -95,6 +98,17 @@ class AppContext:
         else:
             self.scheduler = Scheduler(cfg, self.bus, self.printer_api, self.connector)
             self.scheduler.start()
+
+        # Modelli 3D + slicing on-the-go (PrusaSlicer CLI, opzionale)
+        self.models = ModelStore(cfg)
+        self.slicer = Slicer(cfg, self.models)
+
+        async def _transfer_after_slice(job, gcode_path):
+            if self.cfg.printer.get("driver", "sdcp") == "moonraker":
+                await self.moonraker_api.upload(gcode_path.name, gcode_path.read_bytes())
+            else:
+                await self.uploader.transfer_to_printer(gcode_path)
+        self.slicer.set_transfer_callback(_transfer_after_slice)
 
         self.telegram_commands = TelegramCommandHandler(
             cfg, self.state, self.printer_api, self.webcam, self.telegram,

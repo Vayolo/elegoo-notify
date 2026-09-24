@@ -3,7 +3,7 @@
 [![License: GPL v2](https://img.shields.io/badge/License-GPLv2-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](requirements.txt)
 [![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)](Dockerfile)
-[![Tests](https://img.shields.io/badge/tests-64%20checks-green)](#testing)
+[![Tests](https://img.shields.io/badge/tests-75%20checks-green)](#testing)
 
 **Self-hosted monitoring, Telegram notifications, AI print-failure detection and
 remote control for the Elegoo Centauri Carbon 3D printer.**
@@ -288,6 +288,29 @@ little headroom (no extra plugins), first boot flashes toolhead/bed boards,
 and the Elegoo app/cloud stop working. If you only need monitoring, the stock
 firmware + this service is already a complete solution.
 
+## 3D models & slicing on the go
+
+The dashboard has a built-in **STL viewer** (three.js, vendored, works on LAN)
+and a slicing pipeline: upload a model → inspect it in 3D → slice → send to
+the printer → start, all from the browser.
+
+- `POST /models` (multipart `.stl`/`.3mf`/`.obj`) → stored in `data/models`
+- `GET /models` / `GET /models/{name}` (served to the viewer) / `DELETE`
+- `POST /models/{name}/slice` — body:
+  `{"material": "pla"|"petg", "layer_height": 0.2, "infill": 15,
+    "supports": false, "transfer": true}`
+  → async job (one at a time — modest CPUs deserve mercy): status on
+  `GET /slice/jobs[/{id}]`. On success the GCODE lands in `data/gcodes`
+  and (if `transfer`) is MD5-uploaded to the printer, ready for
+  `POST /print` or the Telegram `/stampa` command.
+- Engine: **PrusaSlicer 2.8.1** CLI (AGPL-3.0, see LICENSE-NOTICE) bundled
+  in the Docker image, with hand-written Centauri Carbon profiles in
+  `slicer-profiles/centauri_carbon/` (PLA 215/60, PETG 240/80, conservative
+  speeds). Tune `printer.ini` start/end g-code to taste.
+- Not installed? Every slicing endpoint degrades gracefully (501) and the
+  rest of the service keeps working.
+- Expect a benchy in ~2-6 min on a Celeron-class CPU; big models queue.
+
 ## REST API
 
 | Endpoint | Description |
@@ -381,7 +404,8 @@ python3 tests/run_ws_tests.py      # 24 checks: events → notifications+photos,
 python3 tests/run_ai_tests.py     # 11 checks: spaghetti → critical alert → auto-stop fail-safe, smoke
 python3 tests/run_layer_tests.py  # 10 checks: LayerWatch score/deviance → detach
 python3 tests/run_ml_test.py      # 4 checks: ML loads, real healthy frame scores low
-python3 tests/run_moonraker_tests.py # 13 checks: full stack on a Klipper/COSMOS printer
+python3 tests/run_moonraker_tests.py  # 13 checks: full stack on a Klipper/COSMOS printer
+python3 tests/run_slicer_tests.py   # 11 checks: models upload/view/slice pipeline (+ real slice if prusa-slicer installed)
 ```
 
 The simulator implements the real SDCP payloads (see [docs/examples.md]

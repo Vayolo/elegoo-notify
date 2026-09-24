@@ -36,3 +36,13 @@ Per uso personale/privato nessun obbligo sorge dalla GPL.
 
 Elegoo Centauri Carbon — SDCP v3 (Smart Device Control Protocol).
 Documentazione della community: https://docs.opencentauri.cc/software/api/
+
+## PrusaSlicer — AGPL-3.0
+
+L'immagine Docker include il binario **PrusaSlicer 2.8.1**
+(https://www.prusa3d.com/prusaslicer/, licenza AGPL-3.0), invocato come
+programma separato via CLI per lo slicing on-the-go. Il binario è
+ridistribuito non modificato; sorgenti e licenza originals:
+https://github.com/prusa3d/PrusaSlicer — AGPL-3.0.
+I profili in `slicer-profiles/centauri_carbon/` sono opera nostra (GPL-2.0
+come il resto del progetto derivato).

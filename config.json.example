@@ -148,7 +148,8 @@
   "paths": {
     "logs": "data/logs",
     "snapshots": "data/snapshots",
-    "gcodes": "data/gcodes"
+    "gcodes": "data/gcodes",
+    "models": "data/models"
   },
   "logging": {
     "level": "INFO",
@@ -157,5 +158,13 @@
   },
   "upload": {
     "max_size_mb": 500
+  },
+  "models": {
+    "max_size_mb": 200
+  },
+  "slicer": {
+    "path": "prusa-slicer",
+    "profiles_dir": "slicer-profiles/centauri_carbon",
+    "timeout_seconds": 1800
   }
 }
