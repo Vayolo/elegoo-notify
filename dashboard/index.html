@@ -98,12 +98,12 @@ label.small{font-size:.8rem;color:var(--dim)}
 <div id="sliceModal">
   <div class="modalCard">
     <h3 id="sliceTitle">⚙️ Slice</h3>
+    <label class="small">Profilo di stampa (preset ufficiali Elegoo CC)</label>
+    <select id="slProfile"></select>
     <label class="small">Materiale</label>
     <select id="slMat"><option value="pla">PLA</option><option value="petg">PETG</option></select>
-    <label class="small">Layer (mm)</label>
-    <select id="slLayer"><option>0.2</option><option>0.28</option><option>0.16</option><option>0.12</option></select>
-    <label class="small">Riempimento %</label>
-    <input type="number" id="slInfill" value="15" min="0" max="100">
+    <label class="small">Riempimento % (vuoto = default del profilo)</label>
+    <input type="number" id="slInfill" placeholder="15" min="0" max="100">
     <label class="small"><input type="checkbox" id="slSupp" style="width:auto;margin-right:6px">Supporti (solo dal piatto)</label>
     <label class="small"><input type="checkbox" id="slTransfer" style="width:auto;margin-right:6px" checked>Trasferisci il GCODE alla stampante</label>
     <div style="display:flex;gap:8px;margin-top:10px">
@@ -129,6 +129,7 @@ async function askAuth(){
 async function jfetch(url,opts={}){
   const h=Object.assign({},opts.headers||{});
   const a=authHeader(); if(a)h['Authorization']=a;
+  if(opts.body&&typeof opts.body==='string'&&!h['Content-Type'])h['Content-Type']='application/json';
   const r=await fetch(url,Object.assign({},opts,{headers:h}));
   if(r.status===401){askAuth();throw new Error('401');}
   return r;
@@ -331,10 +332,23 @@ function openSliceModal(name){
   document.getElementById('sliceModal').classList.add('open');
 }
 function closeSliceModal(){document.getElementById('sliceModal').classList.remove('open');if(slicePoll)clearInterval(slicePoll);}
+let sliceProfiles={};
+function loadSliceProfiles(){
+  jfetch('/slice/profiles').then(r=>r.json()).then(j=>{
+    sliceProfiles={};const sel=document.getElementById('slProfile');sel.innerHTML='';
+    (j.profiles||[]).forEach(p=>{
+      sliceProfiles[p.id]=p;
+      const o=document.createElement('option');o.value=p.id;
+      o.textContent=p.name+(p.layer_height?' — '+p.layer_height+'mm':'');
+      if(p.default)o.selected=true;
+      sel.appendChild(o);
+    });
+  }).catch(()=>{});
+}
 function startSlice(){
-  const body={material:document.getElementById('slMat').value,
-    layer_height:parseFloat(document.getElementById('slLayer').value),
-    infill:parseInt(document.getElementById('slInfill').value||'15'),
+  const body={profile:document.getElementById('slProfile').value||'standard',
+    material:document.getElementById('slMat').value,
+    infill:parseInt(document.getElementById('slInfill').value||'')||undefined,
     supports:document.getElementById('slSupp').checked,
     transfer:document.getElementById('slTransfer').checked};
   jfetch('/models/'+encodeURIComponent(currentModel)+'/slice',{method:'POST',body:JSON.stringify(body)})
@@ -368,6 +382,7 @@ async function cmdPrint(name){
   catch(e){alert('errore avvio: '+e)}
 }
 refreshModels();
+loadSliceProfiles();
 
 sseLoop();
 // stato iniziale

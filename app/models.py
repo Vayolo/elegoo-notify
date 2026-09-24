@@ -30,6 +30,43 @@ log = logging.getLogger("elegoo.models")
 ALLOWED_EXT = {".stl", ".3mf", ".obj"}
 MATERIALS = {"pla": "filament_pla.ini", "petg": "filament_petg.ini"}
 
+# Profili di stampa: preset UFFICIALI "Elegoo Centauri Carbon 0.4 nozzle"
+# (OrcaSlicer resources/profiles/Elegoo). "file" è un INI caricato DOPO
+# print.ini (le chiavi definite sovrascrivono il base Standard 0.20).
+PRINT_PROFILES: dict[str, dict] = {
+    "standard": {
+        "file": None, "name": "Standard 0.20mm", "layer_height": 0.20,
+        "default_infill": 15, "default": True,
+        "description": "Uso generale, 2 pareti — profilo ufficiale Elegoo CC"},
+    "optimal": {
+        "file": "print_optimal_016.ini", "name": "Optimal 0.16mm",
+        "layer_height": 0.16, "default_infill": 15,
+        "description": "Dettaglio più fine, tempo di stampa medio"},
+    "fine": {
+        "file": "print_fine_012.ini", "name": "Fine 0.12mm",
+        "layer_height": 0.12, "default_infill": 15,
+        "description": "Dettaglio massimo, 3 pareti, stampa lenta"},
+    "strength": {
+        "file": "print_strength_020.ini", "name": "Strength 0.20mm",
+        "layer_height": 0.20, "default_infill": 20,
+        "description": "6 pareti, top 6, bottom 5, outer 120 — parti solide"},
+    "draft": {
+        "file": "print_draft_024.ini", "name": "Draft 0.24mm",
+        "layer_height": 0.24, "default_infill": 10,
+        "description": "Più veloce, qualità ridotta"},
+    "extra_draft": {
+        "file": "print_draft_028.ini", "name": "Extra Draft 0.28mm",
+        "layer_height": 0.28, "default_infill": 10,
+        "description": "Massima velocità, per prototipi"},
+}
+
+
+def profiles_public() -> list[dict]:
+    return [{"id": pid, "name": v["name"], "layer_height": v["layer_height"],
+             "default_infill": v["default_infill"], "default": v.get("default", False),
+             "description": v["description"]}
+            for pid, v in PRINT_PROFILES.items()]
+
 
 def _sanitize(name: str) -> str:
     name = Path(name.replace("\\", "/")).name
@@ -81,9 +118,9 @@ class ModelStore:
 class SliceJob:
     id: str
     model: str
+    profile: str = "standard"
     material: str = "pla"
-    layer_height: float = 0.2
-    infill: int = 15
+    infill: Optional[int] = None      # None = default del profilo
     supports: bool = False
     transfer: bool = True
     state: str = "queued"          # queued | running | done | error
@@ -96,8 +133,9 @@ class SliceJob:
 
     def public(self) -> dict[str, Any]:
         return {"id": self.id, "model": self.model, "state": self.state,
-                "material": self.material, "layer_height": self.layer_height,
-                "infill": self.infill, "supports": self.supports,
+                "profile": self.profile,
+                "material": self.material, "infill": self.infill,
+                "supports": self.supports,
                 "transfer": self.transfer, "gcode": self.gcode,
                 "duration_s": self.duration_s, "error": self.error,
                 "log_tail": self.log_tail[-800:]}
@@ -145,23 +183,28 @@ class Slicer:
 
     # ------------------------------------------------------------------ #
     def create_job(self, model: str, **params) -> SliceJob:
+        profile = str(params.get("profile", "standard")).lower()
+        if profile not in PRINT_PROFILES:
+            raise ValueError(f"profilo non valido: {profile} "
+                             f"(disponibili: {', '.join(PRINT_PROFILES)})")
+        prof = PRINT_PROFILES[profile]
+        raw_infill = params.get("infill")
+        infill = int(raw_infill) if raw_infill is not None else prof["default_infill"]
         job = SliceJob(id=uuid.uuid4().hex[:12], model=model,
+                       profile=profile,
                        material=str(params.get("material", "pla")).lower(),
-                       layer_height=float(params.get("layer_height", 0.2)),
-                       infill=int(params.get("infill", 15)),
+                       infill=infill,
                        supports=bool(params.get("supports", False)),
                        transfer=bool(params.get("transfer", True)))
         if job.material not in MATERIALS:
             raise ValueError(f"materiale non valido: {job.material}")
-        if not 0.05 <= job.layer_height <= 0.32:
-            raise ValueError("layer_height fuori range (0.05-0.32)")
         if not 0 <= job.infill <= 100:
             raise ValueError("infill fuori range (0-100)")
         self.jobs[job.id] = job
         self._queue.append(job)
         self._ensure_worker()
-        log.info("Job slicing %s: %s %s layer=%.2f infill=%d%% supports=%s",
-                 job.id, model, job.material, job.layer_height, job.infill, job.supports)
+        log.info("Job slicing %s: %s profilo=%s %s infill=%d%% supports=%s",
+                 job.id, model, profile, job.material, job.infill, job.supports)
         return job
 
     def _ensure_worker(self) -> None:
@@ -185,13 +228,12 @@ class Slicer:
 
     # ------------------------------------------------------------------ #
     def _override_ini(self, job: SliceJob) -> Path:
-        """INI per-job con i parametri richiesti (si applica DOPO print.ini)."""
+        """INI per-job con infill/supports (si applica DOPO i preset)."""
         lines = [
-            f"layer_height = {job.layer_height}",
             f"infill_density = {job.infill}",
             f"support_material = {1 if job.supports else 0}",
             "support_material_buildplate_only = 1",
-            f"; job {job.id}",
+            f"; job {job.id} profilo={job.profile}",
         ]
         p = self.profiles / f"job_{job.id}.ini"
         p.write_text("\n".join(lines) + "\n")
@@ -210,14 +252,22 @@ class Slicer:
         out_path = gcode_dir / gcode_name
 
         override = self._override_ini(job)
+        preset = PRINT_PROFILES.get(job.profile, {})
         cmd = [self.binary,
                "--load", str(self.profiles / "printer.ini"),
                "--load", str(self.profiles / MATERIALS[job.material]),
-               "--load", str(self.profiles / "print.ini"),
-               "--load", str(override),
-               "--slice", str(model_path),
-               "-o", str(out_path)]
-        log.info("Slicing %s: %s", job.id, shlex.join(cmd)[:220])
+               "--load", str(self.profiles / "print.ini")]
+        preset_file = preset.get("file")
+        if preset_file:
+            preset_path = self.profiles / preset_file
+            if not preset_path.is_file():
+                raise FileNotFoundError(f"preset mancante: {preset_file}")
+            cmd += ["--load", str(preset_path)]
+        cmd += ["--load", str(override),
+                "--slice", str(model_path),
+                "-o", str(out_path)]
+        log.info("Slicing %s (profilo %s): %s", job.id, job.profile,
+                 shlex.join(cmd)[:260])
         t0 = time.time()
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)

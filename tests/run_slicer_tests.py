@@ -133,10 +133,23 @@ async def pipeline_suite(ctx, session, sim, stub_path: Path):
     check("GET modello inesistente → 404",
           (await session.get(f"{API}/models/nope.stl")).status == 404)
 
-    # slice con lo stub
+    # profili disponibili
+    async with session.get(f"{API}/slice/profiles") as r:
+        pr = await r.json()
+    check("Elenco profili di stampa (≥6 preset ufficiali)",
+          r.status == 200 and len(pr.get("profiles", [])) >= 6
+          and any(p["id"] == "standard" for p in pr["profiles"]), f"{pr.get('profiles', [])[:2]}")
+
+    # profilo invalido rifiutato
     async with session.post(f"{API}/models/test_cube.stl/slice",
-                            json={"material": "pla", "layer_height": 0.2,
-                                  "infill": 15, "supports": False,
+                            json={"profile": "voodoo"}) as r:
+        check("Profilo invalido rifiutato (400)",
+              r.status == 400, f"status={r.status}")
+
+    # slice con lo stub + profilo
+    async with session.post(f"{API}/models/test_cube.stl/slice",
+                            json={"profile": "strength", "material": "pla",
+                                  "infill": 25, "supports": False,
                                   "transfer": True}) as r:
         sj = await r.json()
     check("Job slicing creato", r.status == 200 and sj.get("job", {}).get("state") in
@@ -161,6 +174,9 @@ async def pipeline_suite(ctx, session, sim, stub_path: Path):
     check("Parametri invalidi rifiutati (400 material)",
           (await session.post(f"{API}/models/test_cube.stl/slice",
                               json={"material": "abs"})).status == 400)
+    check("Job riporta il profilo usato",
+          ctx.slicer.job(job_id) is not None
+          and ctx.slicer.job(job_id).profile == "strength")
     # cleanup modello
     async with session.delete(f"{API}/models/test_cube.stl") as r:
         await r.json()

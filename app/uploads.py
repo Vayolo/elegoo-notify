@@ -6,6 +6,7 @@ La stampante espone un'interfaccia HTTP:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -73,42 +74,60 @@ class Uploader:
     async def transfer_to_printer(self, path: Path, retries: int = 2) -> dict[str, Any]:
         """Trasferisce il file alla stampante via HTTP multipart.
 
+        Su Moonraker (Klipper/COSMOS) delega a /server/files/upload;
+        su SDCP: invio a pacchetti da 1 MB con Offset crescente, Uuid
+        identico per tutti i pacchetti, MD5 dell'INTERO file e TotalSize
+        globale. (Un POST unico > ~1MB viene rifiutato con connection
+        reset: verificato sul campo.)
         Ritorna {"success": bool, "code": str, "messages": ...}.
         """
         if self.moonraker is not None:
-            # Moonraker (Klipper/COSMOS): POST /server/files/upload
             await self.moonraker.upload(path.name, path.read_bytes())
             return {"success": True, "code": "000000", "messages": None}
         data = path.read_bytes()
         file_md5 = self.md5_of_file(path)
+        CHUNK = 1024 * 1024
         last_err: Optional[str] = None
         for attempt in range(retries + 1):
+            up_uuid = uuid.uuid4().hex
             try:
-                form = aiohttp.FormData()
-                form.add_field("TotalSize", str(len(data)))
-                form.add_field("Uuid", uuid.uuid4().hex)
-                form.add_field("Offset", "0")
-                form.add_field("Check", "1")
-                form.add_field("S-File-MD5", file_md5)
-                form.add_field("File", data, filename=path.name,
-                               content_type="application/octet-stream")
-                timeout = aiohttp.ClientTimeout(total=max(60, len(data) // (256 * 1024) + 30))
-                async with self.session.post(self.upload_url, data=form, timeout=timeout) as resp:
-                    body: dict[str, Any] = {}
-                    try:
-                        body = await resp.json(content_type=None)
-                    except Exception:  # noqa: BLE001
-                        body = {"code": str(resp.status), "messages": "risposta non JSON"}
-                    if resp.status == 200 and body.get("code") == "000000":
-                        log.info("Upload su stampante riuscito: %s", path.name)
-                        return {"success": True, "code": body.get("code"), "messages": None}
-                    last_err = f"HTTP {resp.status} code={body.get('code')} msg={body.get('messages')}"
+                off = 0
+                while off < len(data):
+                    piece = data[off:off + CHUNK]
+                    form = aiohttp.FormData()
+                    form.add_field("TotalSize", str(len(data)))
+                    form.add_field("Uuid", up_uuid)
+                    form.add_field("Offset", str(off))
+                    form.add_field("Check", "1")
+                    form.add_field("S-File-MD5", file_md5)
+                    form.add_field("File", piece, filename=path.name,
+                                   content_type="application/octet-stream")
+                    timeout = aiohttp.ClientTimeout(
+                        total=max(60, len(piece) // (128 * 1024) + 30))
+                    async with self.session.post(self.upload_url, data=form,
+                                                 timeout=timeout) as resp:
+                        body: dict[str, Any] = {}
+                        try:
+                            body = await resp.json(content_type=None)
+                        except Exception:  # noqa: BLE001
+                            body = {"code": str(resp.status),
+                                    "messages": "risposta non JSON"}
+                        if (resp.status != 200
+                                or body.get("code") != "000000"):
+                            raise UploadError(
+                                f"chunk@{off // 1024}KB HTTP {resp.status} "
+                                f"code={body.get('code')} msg={body.get('messages')}")
+                    off += CHUNK
+                log.info("Upload su stampante riuscito: %s (%d KB in %d pacchetti)",
+                         path.name, len(data) // 1024, (len(data) + CHUNK - 1) // CHUNK)
+                return {"success": True, "code": "000000", "messages": None}
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001
                 last_err = str(e)
             if attempt < retries:
-                log.warning("Upload fallito (%s), retry %d/%d", last_err, attempt + 1, retries)
+                log.warning("Upload fallito (%s), retry %d/%d", last_err,
+                             attempt + 1, retries)
                 await asyncio.sleep(1.5 * (attempt + 1))
         raise UploadError(f"upload verso la stampante fallito: {last_err}")
 

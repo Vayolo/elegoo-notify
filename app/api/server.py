@@ -326,16 +326,22 @@ def create_app(ctx) -> FastAPI:
                                      f"({ctx.slicer.binary}): vedi README § Slicing")
         if ctx.models.path(name) is None:
             raise HTTPException(404, "modello non trovato")
+        infill = body.get("infill")
         try:
             job = ctx.slicer.create_job(name,
+                                        profile=body.get("profile", "standard"),
                                         material=body.get("material", "pla"),
-                                        layer_height=float(body.get("layer_height", 0.2)),
-                                        infill=int(body.get("infill", 15)),
+                                        infill=int(infill) if infill is not None else None,
                                         supports=bool(body.get("supports", False)),
                                         transfer=bool(body.get("transfer", True)))
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         return {"ok": True, "job": job.public()}
+
+    @app.get("/slice/profiles", dependencies=[Depends(require_auth)])
+    async def slice_profiles() -> dict:
+        from ..models import profiles_public, MATERIALS
+        return {"profiles": profiles_public(), "materials": sorted(MATERIALS)}
 
     @app.get("/slice/jobs", dependencies=[Depends(require_auth)])
     async def slice_jobs() -> dict:
