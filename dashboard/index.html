@@ -146,8 +146,28 @@
 
 
   <section class="tabpage" data-tab="profili">
-    <div id="profilesGrid" class="pgrid"></div>
+    <div class="card" style="margin-bottom:16px">
+      <h2>🧪 Materiali <span class="actions"><button class="btn primary sm" id="matAdd">➕ Nuovo materiale</button></span></h2>
+      <div id="matGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px"></div>
+    </div>
+    <div class="card">
+      <h2>⚙️ Profili di stampa <span class="actions"><button class="btn primary sm" id="profAdd">➕ Nuovo profilo</button></span></h2>
+      <div id="profilesGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px"></div>
+    </div>
   </section>
+
+  <!-- ===== editor materiale/profilo ===== -->
+  <div class="modal" id="matModal">
+    <div class="mbox">
+      <div class="mhead"><h3 id="matModalTitle">Materiale</h3><button class="btn ghost sm" onclick="UI.closeModal('matModal')">✖</button></div>
+      <div class="mbody" id="matModalBody"></div>
+      <div class="mfoot">
+        <button class="btn" onclick="UI.closeModal('matModal')">Annulla</button>
+        <button class="btn danger" id="matDelete" hidden>🗑 Elimina</button>
+        <button class="btn primary" id="matSave">💾 Salva</button>
+      </div>
+    </div>
+  </div>
 
   <section class="tabpage" data-tab="filamento">
     <div class="card" style="margin-bottom:16px">

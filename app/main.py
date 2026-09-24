@@ -60,6 +60,7 @@ class AppContext:
         self.models: Optional[ModelStore] = None
         self.slicer: Optional[Slicer] = None
         self.store: Optional[Store] = None
+        self.matman = None
         self.telegram_commands: Optional[TelegramCommandHandler] = None
 
         self.moonraker_api: Optional[MoonrakerApi] = None
@@ -120,7 +121,10 @@ class AppContext:
             if cosmos_dir.is_dir():
                 cfg.slicer["profiles_dir"] = str(cosmos_dir)
                 log.info("Profili slicer COSMOS: %s", cosmos_dir)
-        self.slicer = Slicer(cfg, self.models)
+        # MaterialManager DOPO il switch profiles_dir (cosmos vs stock)
+        from .api.materials import MaterialManager
+        self.matman = MaterialManager(cfg)
+        self.slicer = Slicer(cfg, self.models, matman=self.matman)
 
         async def _transfer_after_slice(job, gcode_path):
             if self.cfg.printer.get("driver", "sdcp") == "moonraker":

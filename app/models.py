@@ -29,6 +29,7 @@ log = logging.getLogger("elegoo.models")
 
 ALLOWED_EXT = {".stl", ".3mf", ".obj"}
 MATERIALS = {"pla": "filament_pla.ini", "petg": "filament_petg.ini"}
+# Altri materiali (abs, asa, tpu, custom...) via MaterialManager (app/api/materials.py)
 
 # Profili di stampa: preset UFFICIALI "Elegoo Centauri Carbon 0.4 nozzle"
 # (OrcaSlicer resources/profiles/Elegoo). "file" è un INI caricato DOPO
@@ -144,8 +145,9 @@ class SliceJob:
 class Slicer:
     """Coda di slicing: un job alla volta (subprocess prusa-slicer)."""
 
-    def __init__(self, cfg, model_store: ModelStore):
+    def __init__(self, cfg, model_store: ModelStore, matman=None):
         s = cfg.slicer
+        self._matman = matman
         self.cfg = cfg
         self.binary: str = s.get("path", "prusa-slicer")
         self.profiles = Path(s.get("profiles_dir", "slicer-profiles/centauri_carbon"))
@@ -196,8 +198,11 @@ class Slicer:
                        infill=infill,
                        supports=bool(params.get("supports", False)),
                        transfer=bool(params.get("transfer", True)))
-        if job.material not in MATERIALS:
-            raise ValueError(f"materiale non valido: {job.material}")
+        valid = set(MATERIALS.keys())
+        if self._matman:
+            valid |= {m["id"] for m in self._matman.list_materials()}
+        if job.material not in valid:
+            raise ValueError(f"materiale non valido: {job.material} (disponibili: {', '.join(sorted(valid))})")
         if not 0 <= job.infill <= 100:
             raise ValueError("infill fuori range (0-100)")
         self.jobs[job.id] = job
@@ -254,9 +259,21 @@ class Slicer:
         override = self._override_ini(job)
         preset = PRINT_PROFILES.get(job.profile, {})
         cmd = [self.binary,
-               "--load", str(self.profiles / "printer.ini"),
-               "--load", str(self.profiles / MATERIALS[job.material]),
-               "--load", str(self.profiles / "print.ini")]
+               "--load", str(self.profiles / "printer.ini")]
+
+        if job.material in MATERIALS:
+            cmd += ["--load", str(self.profiles / MATERIALS[job.material])]
+        elif self._matman:
+            ini_text = self._matman.to_ini(job.material)
+            if not ini_text:
+                raise ValueError(f"materiale {job.material} non generabile")
+            mat_path = self.profiles / f"job_{job.id}_mat.ini"
+            mat_path.write_text(ini_text)
+            cmd += ["--load", str(mat_path)]
+        else:
+            raise ValueError(f"materiale non valido: {job.material}")
+
+        cmd += ["--load", str(self.profiles / "print.ini")]
         preset_file = preset.get("file")
         if preset_file:
             preset_path = self.profiles / preset_file
@@ -286,6 +303,7 @@ class Slicer:
             raise
         finally:
             override.unlink(missing_ok=True)
+            (self.profiles / f"job_{job.id}_mat.ini").unlink(missing_ok=True)
         job.log_tail = output.decode(errors="replace")
         if rc != 0 or not out_path.is_file():
             raise RuntimeError(f"prusa-slicer rc={rc}: "

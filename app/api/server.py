@@ -56,6 +56,9 @@ def create_app(ctx) -> FastAPI:
     from ..store import Store
     store = Store(str(Path(cfg.paths.get("logs", "data/logs")).parent))
     ctx.store = store
+    from .materials import MaterialManager
+    matman = MaterialManager(cfg)
+    ctx.matman = matman
 
     # ------------------------------------------------------------------ #
     # Auth (opzionale, da env DASHBOARD_USER / DASHBOARD_PASSWORD)
@@ -423,6 +426,50 @@ def create_app(ctx) -> FastAPI:
             return store.set_active_spool(body.get("id"))
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
+
+    # ---- Materiali (CRUD) ----
+    @app.get("/materials", dependencies=[Depends(require_auth)])
+    async def materials_list() -> dict:
+        return {"materials": matman.list_materials()}
+
+    @app.get("/materials/{mid}", dependencies=[Depends(require_auth)])
+    async def materials_get(mid: str) -> dict:
+        m = matman.get_material(mid)
+        if not m:
+            raise HTTPException(404, "materiale non trovato")
+        return m
+
+    @app.put("/materials/{mid}", dependencies=[Depends(require_auth)])
+    async def materials_put(mid: str, body: dict) -> dict:
+        return {"ok": True, "material": matman.save_material(mid, body)}
+
+    @app.delete("/materials/{mid}", dependencies=[Depends(require_auth)])
+    async def materials_del(mid: str) -> dict:
+        if matman.delete_material(mid):
+            return {"ok": True}
+        raise HTTPException(404, "materiale built-in o non trovato")
+
+    # ---- Profili di stampa (CRUD) ----
+    @app.get("/profiles", dependencies=[Depends(require_auth)])
+    async def profiles_list() -> dict:
+        return {"profiles": matman.list_profiles()}
+
+    @app.get("/profiles/{pid}", dependencies=[Depends(require_auth)])
+    async def profiles_get(pid: str) -> dict:
+        p = matman.get_profile(pid)
+        if not p:
+            raise HTTPException(404, "profilo non trovato")
+        return p
+
+    @app.put("/profiles/{pid}", dependencies=[Depends(require_auth)])
+    async def profiles_put(pid: str, body: dict) -> dict:
+        return {"ok": True, "profile": matman.save_profile(pid, body)}
+
+    @app.delete("/profiles/{pid}", dependencies=[Depends(require_auth)])
+    async def profiles_del(pid: str) -> dict:
+        if matman.delete_profile(pid):
+            return {"ok": True}
+        raise HTTPException(404, "profilo built-in o non trovato")
 
     @app.post("/telegram/cmd", dependencies=[Depends(require_auth)])
     async def telegram_cmd(body: dict) -> dict:

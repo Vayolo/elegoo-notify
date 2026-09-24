@@ -382,8 +382,9 @@ function openViewer(name){
 
 /* ============================ SLICING ============================ */
 let sliceProfiles={},sliceJobPoll=null,sliceModel=null;
-function loadSliceProfiles(){
-  jfetch('/slice/profiles').then(r=>r.json()).then(j=>{
+async function loadSliceProfiles(){
+  try{
+    const r=await jfetch('/slice/profiles');const j=await r.json();
     sliceProfiles={};const sel=$('slProfile');sel.innerHTML='';
     (j.profiles||[]).forEach(p=>{
       sliceProfiles[p.id]=p;
@@ -393,7 +394,16 @@ function loadSliceProfiles(){
       sel.appendChild(o);
     });
     onProfileChange();
-  }).catch(()=>{});
+  }catch(e){}
+  try{
+    const r=await jfetch('/materials');const j=await r.json();
+    const sel=$('slMat');sel.innerHTML='';
+    (j.materials||[]).forEach(m=>{
+      const o=document.createElement('option');o.value=m.id;
+      o.textContent=m.name;
+      sel.appendChild(o);
+    });
+  }catch(e){}
 }
 function onProfileChange(){
   const p=sliceProfiles[$('slProfile').value];
@@ -593,25 +603,172 @@ function boot(){
   refreshAI();
 }
 
-/* ============================ PROFILI SLICING ============================ */
+/* ============================ MATERIALI & PROFILI (CRUD) ============================ */
+let editingMat=null, materialsList=[], profilesList=[];
+
 async function refreshProfiles(){
+  await Promise.all([refreshMaterials(), refreshPrintProfiles()]);
+}
+
+async function refreshMaterials(){
   try{
-    const r=await jfetch('/slice/profiles');const j=await r.json();
-    const grid=$('profilesGrid');grid.innerHTML='';
-    (j.profiles||[]).forEach(p=>{
+    const r=await jfetch('/materials');const j=await r.json();
+    materialsList=j.materials||[];
+    const grid=$('matGrid');grid.innerHTML='';
+    materialsList.forEach(m=>{
       const c=document.createElement('div');c.className='card';c.style.margin='0';
-      const isDef=p.default?'<span class="badge ok">★ default</span>':'';
-      c.innerHTML=`<h2>${esc(p.name)} ${isDef}</h2>
-        <div class="pfield"><span>Layer</span><b>${p.layer_height} mm</b></div>
-        <div class="pfield"><span>Infill default</span><b>${p.default_infill}%</b></div>
-        <div style="font-size:.82rem;color:var(--txt-dim);margin-top:10px">${esc(p.description||'')}</div>`;
+      const badge=m.builtin?'<span class="badge dim">built-in</span>':'<span class="badge ok">custom</span>';
+      c.innerHTML=`<h2><span style="display:inline-block;width:14px;height:14px;border-radius:4px;background:${m.color||'#888'};margin-right:6px;vertical-align:-2px"></span>${esc(m.name)} ${badge}</h2>
+        <div class="pfield"><span>Ugello</span><b>${m.nozzle_temperature}°C</b></div>
+        <div class="pfield"><span>Piatto</span><b>${m.bed_temperature}°C</b></div>
+        <div class="pfield"><span>Ventola</span><b>${m.fan_min_speed}-${m.fan_max_speed}%</b></div>
+        <div class="pfield"><span>VMS</span><b>${m.filament_max_volumetric_speed} mm³/s</b></div>
+        <div style="font-size:.78rem;color:var(--txt-dim);margin-top:8px">${esc(m.description||'')}</div>
+        <button class="btn sm" style="margin-top:10px" data-mid="${m.id}">✏️ Modifica</button>`;
+      c.querySelector('button').onclick=()=>openMatEditor(m);
       grid.appendChild(c);
     });
-    grid.style.display='grid';
-    grid.style.gridTemplateColumns='repeat(auto-fill,minmax(280px,1fr))';
-    grid.style.gap='12px';
+    if(!materialsList.length)grid.innerHTML='<div class="empty"><div class="et">Nessun materiale</div></div>';
   }catch(e){}
 }
+
+async function refreshPrintProfiles(){
+  try{
+    const r=await jfetch('/profiles');const j=await r.json();
+    profilesList=j.profiles||[];
+    const grid=$('profilesGrid');grid.innerHTML='';
+    profilesList.forEach(p=>{
+      const c=document.createElement('div');c.className='card';c.style.margin='0';
+      const badge=p.builtin?'<span class="badge dim">built-in</span>':'<span class="badge ok">custom</span>';
+      c.innerHTML=`<h2>${esc(p.name)} ${badge}</h2>
+        <div class="pfield"><span>Layer</span><b>${p.layer_height||'—'} mm</b></div>
+        <div class="pfield"><span>Pareti</span><b>${p.perimeters||p.walls||'—'}</b></div>
+        <div class="pfield"><span>Infill def.</span><b>${p.default_infill||'—'}%</b></div>
+        <div style="font-size:.78rem;color:var(--txt-dim);margin-top:8px">${esc(p.description||'')}</div>
+        ${!p.builtin?'<button class="btn sm" style="margin-top:10px" data-pid="'+p.id+'">✏️ Modifica</button>':''}`;
+      if(!p.builtin)c.querySelector('button').onclick=()=>openProfEditor(p);
+      grid.appendChild(c);
+    });
+  }catch(e){}
+}
+
+const MAT_FIELDS=[
+  ['name','Nome','text','PLA Basic'],
+  ['filament_type','Tipo filamento','text','PLA'],
+  ['nozzle_temperature','Ugello °C','number',210],
+  ['nozzle_temperature_initial_layer','Ugello 1° layer °C','number',210],
+  ['bed_temperature','Piatto °C','number',60],
+  ['bed_temperature_initial_layer','Piatto 1° layer °C','number',60],
+  ['fan_min_speed','Ventola min %','number',100],
+  ['fan_max_speed','Ventola max %','number',100],
+  ['filament_max_volumetric_speed','VMS mm³/s','number',15],
+  ['filament_flow_ratio','Flow ratio','number',0.98],
+  ['filament_density','Densità g/cm³','number',1.25],
+  ['retraction_length','Retrazione mm','number',0.8],
+  ['retraction_speed','Vel. ritrazione mm/s','number',40],
+  ['color','Colore','text','#cccccc'],
+  ['description','Descrizione','text',''],
+];
+
+function openMatEditor(m){
+  editingMat=m?{...m}:{id:'custom_'+Date.now(),name:'',filament_type:'',
+    nozzle_temperature:210,nozzle_temperature_initial_layer:210,
+    bed_temperature:60,bed_temperature_initial_layer:60,
+    fan_min_speed:100,fan_max_speed:100,filament_max_volumetric_speed:15,
+    filament_flow_ratio:0.98,filament_density:1.25,retraction_length:0.8,
+    retraction_speed:40,color:'#cccccc',description:''};
+  $('matModalTitle').textContent=m?('✏️ '+m.name):'➕ Nuovo materiale';
+  $('matDelete').hidden=!m||m.builtin===true;
+  const body=$('matModalBody');body.innerHTML='';
+  MAT_FIELDS.forEach(([key,label,type,def])=>{
+    const l=document.createElement('label');l.className='field';
+    l.innerHTML=`<span>${label}</span>`;
+    const inp=document.createElement('input');
+    inp.type=type;inp.id='mf_'+key;inp.value=editingMat[key]!==undefined?editingMat[key]:def;
+    if(type==='number'){inp.step='0.01';inp.min='0'}
+    l.appendChild(inp);body.appendChild(l);
+  });
+  UI.openModal('matModal');
+}
+
+$('matSave').onclick=async()=>{
+  const data={...editingMat};
+  MAT_FIELDS.forEach(([key])=>{
+    const el=$('mf_'+key);if(!el)return;
+    data[key]=el.type==='number'?parseFloat(el.value)||0:el.value;
+  });
+  try{
+    const r=await jfetch('/materials/'+encodeURIComponent(data.id),{method:'PUT',body:JSON.stringify(data)});
+    const j=await r.json();
+    if(j.ok!==undefined){toast('Materiale salvato',data.name,'ok');UI.closeModal('matModal');refreshMaterials()}
+    else toast('Errore',j.detail||'','err');
+  }catch(e){toast('Errore',String(e),'err')}
+};
+
+$('matDelete').onclick=async()=>{
+  if(!confirm('Eliminare '+editingMat.name+'?'))return;
+  try{await jfetch('/materials/'+encodeURIComponent(editingMat.id),{method:'DELETE'});
+    toast('Materiale eliminato',editingMat.name,'ok');UI.closeModal('matModal');refreshMaterials();
+  }catch(e){toast('Errore',String(e),'err')}
+};
+
+$('matAdd').onclick=()=>openMatEditor(null);
+
+// profili di stampa custom
+const PROF_FIELDS=[
+  ['name','Nome','text','Il mio profilo'],
+  ['layer_height','Layer (mm)','number',0.2],
+  ['perimeters','Pareti','number',2],
+  ['top_solid_layers','Layer top','number',5],
+  ['bottom_solid_layers','Layer bottom','number',3],
+  ['external_perimeter_speed','Vel. parete esterna mm/s','number',160],
+  ['perimeter_speed','Vel. pareti interne mm/s','number',200],
+  ['infill_speed','Vel. riempimento mm/s','number',200],
+  ['default_infill','Infill default %','number',15],
+  ['description','Descrizione','text',''],
+];
+
+function openProfEditor(p){
+  const data={id:p? p.id : 'custom_'+Date.now(),name:'',layer_height:0.2,perimeters:2,
+    top_solid_layers:5,bottom_solid_layers:3,external_perimeter_speed:160,
+    perimeter_speed:200,infill_speed:200,default_infill:15,description:'',...(p||{})};
+  $('matModalTitle').textContent=p?('✏️ '+p.name):'➕ Nuovo profilo di stampa';
+  $('matDelete').hidden=!p||p.builtin===true;
+  const body=$('matModalBody');body.innerHTML='';
+  PROF_FIELDS.forEach(([key,label,type,def])=>{
+    const l=document.createElement('label');l.className='field';
+    l.innerHTML=`<span>${label}</span>`;
+    const inp=document.createElement('input');
+    inp.type=type;inp.id='mf_'+key;inp.value=data[key]!==undefined?data[key]:def;
+    if(type==='number'){inp.step='0.01'}
+    l.appendChild(inp);body.appendChild(l);
+  });
+  editingMat=data;
+  UI.openModal('matModal');
+}
+
+// override save per profili
+const _origMatSave=$('matSave').onclick;
+$('matSave').onclick=async()=>{
+  if(editingMat && editingMat.id && editingMat.id.startsWith('custom_prof_')){
+    // è un profilo di stampa
+    const data={...editingMat};
+    PROF_FIELDS.forEach(([key])=>{
+      const el=$('mf_'+key);if(!el)return;
+      data[key]=el.type==='number'?parseFloat(el.value)||0:el.value;
+    });
+    try{
+      const r=await jfetch('/profiles/'+encodeURIComponent(data.id),{method:'PUT',body:JSON.stringify(data)});
+      const j=await r.json();
+      if(j.ok!==undefined){toast('Profilo salvato',data.name,'ok');UI.closeModal('matModal');refreshPrintProfiles()}
+      else toast('Errore',j.detail||'','err');
+    }catch(e){toast('Errore',String(e),'err')}
+    return;
+  }
+  _origMatSave();
+};
+
+$('profAdd').onclick=()=>openProfEditor(null);
 
 /* ============================ FILAMENTO ============================ */
 async function refreshFilament(){
