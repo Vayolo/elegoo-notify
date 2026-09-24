@@ -31,6 +31,7 @@ from .ai.monitor import AiMonitor
 from .telegram_commands import TelegramCommandHandler
 from pathlib import Path
 from .models import ModelStore, Slicer
+from .store import Store
 from .api.ha_bridge import HaBridge
 from .api.server import create_app
 
@@ -58,6 +59,7 @@ class AppContext:
         self.uploader: Optional[Uploader] = None
         self.models: Optional[ModelStore] = None
         self.slicer: Optional[Slicer] = None
+        self.store: Optional[Store] = None
         self.telegram_commands: Optional[TelegramCommandHandler] = None
 
         self.moonraker_api: Optional[MoonrakerApi] = None
@@ -100,6 +102,11 @@ class AppContext:
             self.scheduler = Scheduler(cfg, self.bus, self.printer_api, self.connector)
             self.scheduler.start()
 
+        # Store: storia stampe + filamento
+        from pathlib import Path as _P
+        base = _P(cfg.paths.get("logs", "data/logs")).parent
+        self.store = Store(str(base))
+
         # Modelli 3D + slicing on-the-go (PrusaSlicer CLI, opzionale).
         # Profili: COSMOS/Klipper ha start-gcode DIVERSO (no M729/M6211:
         # COSMOS li rifiuta con emergency stop; la macchina fa da sé
@@ -134,6 +141,9 @@ class AppContext:
         self._state_sub = self.bus.subscribe(
             "sdcp_status", "sdcp_attributes", "printer_connected", "printer_disconnected")
         self._state_sub.set_callback(self._on_sdcp_event)
+
+        self._hist_sub = self.bus.subscribe("print_completed", "print_failed")
+        self._hist_sub.set_callback(self._on_print_end)
 
         if cfg.mqtt.get("enabled"):
             self.ha = HaBridge(cfg, self.bus, self.state, self.printer_api,
@@ -206,6 +216,25 @@ class AppContext:
             if force or now - self._last_state_publish >= 1.0:
                 self._last_state_publish = now
                 self.bus.publish("state_changed", self.state.snapshot())
+
+    async def _on_print_end(self, event: dict[str, Any]) -> None:
+        """A fine stampa: registra nella storia + consuma filamento dalla bobina attiva."""
+        try:
+            etype = event.get("type", "")
+            data = event.get("data") or {}
+            success = etype == "print_completed"
+            filename = data.get("filename") or "sconosciuto"
+            duration_s = data.get("duration_s") or 0
+            filament_mm = duration_s * 5.2 if duration_s > 0 else 0
+            material = self.store.get_active_material() or "unknown"
+            rec = self.store.add_print_record(
+                filename, duration_s, filament_mm, material, success,
+                None if success else data.get("reason"))
+            if success and filament_mm > 0:
+                grams = Store._mm_to_g(filament_mm, material)
+                self.store.consume_filament(grams)
+        except Exception:
+            log.exception("Errore registrazione storia")
 
     async def _enable_video_on_stream_failure(self) -> None:
         """Se lo stream MJPEG non parte, chiede alla stampante di attivarlo (Cmd 386)."""

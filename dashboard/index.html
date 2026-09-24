@@ -8,6 +8,7 @@
 <link rel="manifest" href="/assets/manifest.json">
 <link rel="icon" type="image/png" href="/assets/favicon.png">
 <link rel="stylesheet" href="/assets/app.css">
+<script>if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{})</script>
 </head>
 <body>
 <div class="wrap">
@@ -109,6 +110,9 @@
     <button class="tab active" data-tab="modelli">📦 Modelli</button>
     <button class="tab" data-tab="file">📄 File GCODE</button>
     <button class="tab" data-tab="eventi">📡 Eventi</button>
+    <button class="tab" data-tab="profili">⚙️ Profili</button>
+    <button class="tab" data-tab="filamento">🧵 Filamento</button>
+    <button class="tab" data-tab="stats">📊 Statistiche</button>
   </nav>
 
   <section class="tabpage active" data-tab="modelli">
@@ -138,6 +142,42 @@
       <button class="chip" data-f="sys">Sistema</button>
     </div>
     <div class="card" style="padding:6px 16px" id="evList"></div>
+  </section>
+
+
+  <section class="tabpage" data-tab="profili">
+    <div id="profilesGrid" class="pgrid"></div>
+  </section>
+
+  <section class="tabpage" data-tab="filamento">
+    <div class="card" style="margin-bottom:16px">
+      <h2>🧵 Bobina attiva</h2>
+      <div id="activeSpool"></div>
+      <h2 style="margin-top:18px">Inventario bobine</h2>
+      <div id="spoolList"></div>
+      <h2 style="margin-top:18px">➕ Aggiungi bobina</h2>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">
+        <label class="field"><span>Materiale</span>
+          <select id="spMat"><option value="pla">PLA</option><option value="petg">PETG</option>
+          <option value="abs">ABS</option><option value="tpu">TPU</option><option value="asa">ASA</option></select></label>
+        <label class="field"><span>Colore</span><input type="text" id="spColor" placeholder="arancione"></label>
+        <label class="field"><span>Peso (g)</span><input type="number" id="spWeight" placeholder="1000" value="1000"></label>
+        <label class="field"><span>Nome (opz.)</span><input type="text" id="spName" placeholder="Elegoo PLA Basic"></label>
+      </div>
+      <button class="btn primary" id="spAdd" style="margin-top:12px">➕ Aggiungi</button>
+    </div>
+  </section>
+
+  <section class="tabpage" data-tab="stats">
+    <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:16px" id="statCards"></div>
+    <div class="card">
+      <h2>Ultime 10 stampe</h2>
+      <div id="statRecent"></div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Per materiale</h2>
+      <div id="statMaterial"></div>
+    </div>
   </section>
 
 </div>

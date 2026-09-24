@@ -274,3 +274,13 @@ label.field .fhelp{font-size:.72rem;color:var(--txt-faint);margin-top:4px}
   #toasts{left:14px;right:14px;max-width:none}
   .btn{padding:10px 14px}
 }
+
+/* ---------- profili ---------- */
+.pfield{display:flex;justify-content:space-between;padding:6px 0;font-size:.86rem;border-bottom:1px solid var(--border)}
+.pfield span{color:var(--txt-faint)}
+.pfield b{font-family:var(--mono);font-weight:500}
+
+/* ---------- filamento ---------- */
+.spool-active{padding:4px 0}
+.spool-active .spool-info b{font-size:1.1rem;font-weight:600;display:block}
+.spool-active .spool-info span{font-size:.8rem;color:var(--txt-dim)}

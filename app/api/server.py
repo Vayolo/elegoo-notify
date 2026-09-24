@@ -53,6 +53,9 @@ def create_app(ctx) -> FastAPI:
     if assets_dir.is_dir():
         app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
     cfg = ctx.cfg
+    from ..store import Store
+    store = Store(str(Path(cfg.paths.get("logs", "data/logs")).parent))
+    ctx.store = store
 
     # ------------------------------------------------------------------ #
     # Auth (opzionale, da env DASHBOARD_USER / DASHBOARD_PASSWORD)
@@ -149,6 +152,13 @@ def create_app(ctx) -> FastAPI:
                 ctx.webcam.unsubscribe(queue)
 
         return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=--foo")
+
+    @app.get("/sw.js")
+    async def sw() -> FileResponse:
+        swp = Path(__file__).resolve().parents[2] / "dashboard" / "sw.js"
+        if not swp.is_file():
+            raise HTTPException(404, "sw.js non trovato")
+        return FileResponse(swp, media_type="application/javascript")
 
     @app.get("/", dependencies=[Depends(require_auth)])
     async def dashboard() -> FileResponse:
@@ -378,6 +388,41 @@ def create_app(ctx) -> FastAPI:
         if not p.is_file() or p.suffix.lower() != ".jpg":
             raise HTTPException(404, "snapshot non trovato")
         return FileResponse(p, media_type="image/jpeg", filename=safe)
+
+    @app.get("/history", dependencies=[Depends(require_auth)])
+    async def history(limit: int = 100) -> dict:
+        return {"prints": store.get_history(limit)}
+
+    @app.get("/stats", dependencies=[Depends(require_auth)])
+    async def stats() -> dict:
+        return store.get_stats()
+
+    @app.get("/filament", dependencies=[Depends(require_auth)])
+    async def filament() -> dict:
+        return store.get_filament()
+
+    @app.post("/filament/spool", dependencies=[Depends(require_auth)])
+    async def filament_add(body: dict) -> dict:
+        try:
+            spool = store.add_spool(
+                material=str(body.get("material", "pla")).lower(),
+                color=str(body.get("color", "#ccc")),
+                weight_g=float(body.get("weight_g", 1000)),
+                name=str(body.get("name", "")))
+            return {"ok": True, "spool": spool}
+        except (ValueError, TypeError) as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.delete("/filament/spool/{spool_id}", dependencies=[Depends(require_auth)])
+    async def filament_del(spool_id: int) -> dict:
+        return store.remove_spool(spool_id)
+
+    @app.post("/filament/active", dependencies=[Depends(require_auth)])
+    async def filament_set(body: dict) -> dict:
+        try:
+            return store.set_active_spool(body.get("id"))
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
 
     @app.post("/telegram/cmd", dependencies=[Depends(require_auth)])
     async def telegram_cmd(body: dict) -> dict:

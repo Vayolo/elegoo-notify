@@ -102,7 +102,7 @@ function renderCmds(){
   $('btnPause').disabled=!busy||paused;
   $('btnResume').disabled=!paused;
   $('btnStop').disabled=!busy;
-  $('btnLight').textContent=state&&state.light===false?'💡 Luce ON':'🌑 Luce OFF';
+  $('btnLight').textContent=(state&&state.light===true)?'🌑 Luce OFF':'💡 Luce ON';
 }
 async function cmd(kind){
   try{
@@ -117,7 +117,7 @@ $('btnPause').onclick=()=>cmd('pause');
 $('btnResume').onclick=()=>cmd('resume');
 $('btnStop').onclick=()=>{if(confirm('Fermare davvero la stampa in corso?'))cmd('stop')};
 $('btnLight').onclick=async()=>{
-  const on=!(state&&state.light===false);
+  const on=state?!(state.light===true):true;  // on se luce è off/null
   try{const r=await jfetch('/cmd/light',{method:'POST',body:JSON.stringify({on})});
     const j=await r.json();
     j.ok?toast('Luce interna',on?'accesa':'spenta','ok',2500):toast('Luce rifiutata',j.error||'','err');
@@ -592,6 +592,135 @@ function boot(){
   loadSliceProfiles();
   refreshAI();
 }
+
+/* ============================ PROFILI SLICING ============================ */
+async function refreshProfiles(){
+  try{
+    const r=await jfetch('/slice/profiles');const j=await r.json();
+    const grid=$('profilesGrid');grid.innerHTML='';
+    (j.profiles||[]).forEach(p=>{
+      const c=document.createElement('div');c.className='card';c.style.margin='0';
+      const isDef=p.default?'<span class="badge ok">★ default</span>':'';
+      c.innerHTML=`<h2>${esc(p.name)} ${isDef}</h2>
+        <div class="pfield"><span>Layer</span><b>${p.layer_height} mm</b></div>
+        <div class="pfield"><span>Infill default</span><b>${p.default_infill}%</b></div>
+        <div style="font-size:.82rem;color:var(--txt-dim);margin-top:10px">${esc(p.description||'')}</div>`;
+      grid.appendChild(c);
+    });
+    grid.style.display='grid';
+    grid.style.gridTemplateColumns='repeat(auto-fill,minmax(280px,1fr))';
+    grid.style.gap='12px';
+  }catch(e){}
+}
+
+/* ============================ FILAMENTO ============================ */
+async function refreshFilament(){
+  try{
+    const r=await jfetch('/filament');const j=await r.json();
+    // bobina attiva
+    const act=$('activeSpool');
+    const activeId=j.active;
+    const active=(j.spools||[]).find(s=>s.id===activeId);
+    if(active){
+      const pct=active.remaining_g/active.weight_g*100;
+      act.innerHTML=`<div class="spool-active">
+        <div class="spool-info"><b>${esc(active.name)}</b>
+          <span>${active.material.toUpperCase()} · ${esc(active.color)}</span></div>
+        <div class="gauge" style="margin-top:8px"><div style="width:${pct}%;background:${pct<15?'var(--err)':pct<40?'var(--warn)':'var(--ok)'}"></div></div>
+        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:.8rem;color:var(--txt-dim)">
+          <span>Restano <b style="color:var(--txt)">${Math.round(active.remaining_g)} g</b></span>
+          <span>di ${active.weight_g} g</span></div>
+        ${pct<15?'<div class="badge err" style="margin-top:8px">⚠ Quasi esaurita</div>':''}
+      </div>`;
+    }else{
+      act.innerHTML='<div class="empty"><div class="et">Nessuna bobina attiva</div><div class="eh">Seleziona o aggiungi una bobina qui sotto</div></div>';
+    }
+    // lista bobine
+    const list=$('spoolList');list.innerHTML='';
+    (j.spools||[]).forEach(s=>{
+      const row=document.createElement('div');row.className='filerow';
+      const pct=s.remaining_g/s.weight_g*100;
+      const short=s.name.length>30?s.name.slice(0,27)+'…':s.name;
+      row.innerHTML=`<div class="ico">${s.id===activeId?'🟢':'⭕'}</div>
+        <div class="fi"><div class="nm">${esc(short)}</div>
+        <div class="mt">${s.material.toUpperCase()} · ${esc(s.color)} · ${Math.round(s.remaining_g)}/${s.weight_g}g</div></div>
+        <div class="ops"></div>`;
+      const ops=row.querySelector('.ops');
+      if(s.id!==activeId){
+        const bA=document.createElement('button');bA.className='btn sm';bA.textContent='Attiva';
+        bA.onclick=async()=>{await jfetch('/filament/active',{method:'POST',body:JSON.stringify({id:s.id})});
+          toast('Bobina attivata',s.name,'ok',2500);refreshFilament()};
+        ops.appendChild(bA);
+      }
+      const bD=document.createElement('button');bD.className='btn ghost sm';bD.textContent='🗑';
+      bD.onclick=async()=>{if(!confirm('Eliminare '+s.name+'?'))return;
+        await jfetch('/filament/spool/'+s.id,{method:'DELETE'});
+        toast('Bobina eliminata',s.name,'ok',2500);refreshFilament()};
+      ops.appendChild(bD);
+      list.appendChild(row);
+    });
+    if(!(j.spools||[]).length)list.innerHTML='<div class="empty" style="padding:18px"><div class="et">Nessuna bobina in inventario</div></div>';
+  }catch(e){}
+}
+$('spAdd').onclick=async()=>{
+  const body={material:$('spMat').value,color:$('spColor').value||'neutro',
+    weight_g:parseFloat($('spWeight').value)||1000,name:$('spName').value};
+  try{const r=await jfetch('/filament/spool',{method:'POST',body:JSON.stringify(body)});
+    const j=await r.json();
+    if(j.ok){toast('Bobina aggiunta',j.spool.name,'ok');refreshFilament()}
+    else toast('Errore',j.detail||'','err');
+  }catch(e){toast('Errore',String(e),'err')}
+};
+
+/* ============================ STATISTICHE ============================ */
+async function refreshStats(){
+  try{
+    const r=await jfetch('/stats');const j=await r.json();
+    const cards=$('statCards');cards.innerHTML='';
+    const mk=(label,val,sub,icon)=>{const d=document.createElement('div');d.className='card';
+      d.innerHTML=`<h2>${icon} ${label}</h2><div class="big" style="font-size:1.8rem">${val}</div>
+        <div style="font-size:.78rem;color:var(--txt-faint)">${sub}</div>`;return d};
+    cards.appendChild(mk('Stampe',j.total_prints||0,(j.successful||0)+' ok · '+(j.failed||0)+' fallite','🖨️'));
+    cards.appendChild(mk('Successo',(j.success_rate!=null?j.success_rate:0)+'%',j.total_prints>0?'':'nessun dato','✅'));
+    cards.appendChild(mk('Filamento',(j.total_filament_m||0)+' m',Math.round(j.total_filament_g||0)+' g totali','🧵'));
+    cards.appendChild(mk('Tempo stampa',(j.total_print_time_h||0)+' h','ore di stampa cumulate','⏱️'));
+    // per materiale
+    const mat=$('statMaterial');mat.innerHTML='';
+    const entries=Object.entries(j.by_material||{});
+    if(!entries.length){mat.innerHTML='<div class="empty" style="padding:14px"><div class="et">Nessun dato</div></div>';return}
+    const maxC=Math.max(...entries.map(e=>e[1]));
+    entries.forEach(([m,c])=>{
+      const row=document.createElement('div');row.style.cssText='display:flex;align-items:center;gap:12px;padding:6px 0';
+      row.innerHTML=`<span style="width:60px;font-weight:600;text-transform:uppercase">${esc(m)}</span>
+        <div class="gauge" style="flex:1"><div style="width:${c/maxC*100}%;background:var(--accent)"></div></div>
+        <span style="width:30px;text-align:right;font-size:.85rem">${c}</span>`;
+      mat.appendChild(row);
+    });
+    // recenti
+    const rec=$('statRecent');rec.innerHTML='';
+    (j.recent||[]).reverse().forEach(p=>{
+      const row=document.createElement('div');row.className='filerow';
+      const d=new Date((p.ts||0)*1000);
+      const short=p.filename&&p.filename.length>36?p.filename.slice(0,33)+'…':(p.filename||'?');
+      row.innerHTML=`<div class="ico">${p.success?'✅':'❌'}</div>
+        <div class="fi"><div class="nm">${esc(short)}</div>
+        <div class="mt">${d.toLocaleDateString('it-IT')} · ${fmtETA(p.duration_s)} · ${(p.filament_mm/1000).toFixed(1)}m ${p.material.toUpperCase()}</div></div>`;
+      rec.appendChild(row);
+    });
+    if(!(j.recent||[]).length)rec.innerHTML='<div class="empty" style="padding:14px"><div class="et">Nessuna stampa registrata</div></div>';
+  }catch(e){}
+}
+
+/* ---- hook nei tab ---- */
+const _origTab=document.querySelectorAll('.tab').forEach;
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
+  const name=t.dataset.tab;
+  if(name==='profili')refreshProfiles();
+  if(name==='filamento')refreshFilament();
+  if(name==='stats')refreshStats();
+}));
+
 initCam();
 boot();
 sseLoop();
+
