@@ -649,8 +649,8 @@ async function refreshPrintProfiles(){
         <div class="pfield"><span>Pareti</span><b>${p.perimeters||p.walls||'—'}</b></div>
         <div class="pfield"><span>Infill def.</span><b>${p.default_infill||'—'}%</b></div>
         <div style="font-size:.78rem;color:var(--txt-dim);margin-top:8px">${esc(p.description||'')}</div>
-        ${!p.builtin?'<button class="btn sm" style="margin-top:10px" data-pid="'+p.id+'">✏️ Modifica</button>':''}`;
-      if(!p.builtin)c.querySelector('button').onclick=()=>openProfEditor(p);
+        <button class="btn sm" style="margin-top:10px" data-pid="${p.id}">✏️ Modifica</button>`;
+      c.querySelector('button').onclick=()=>openProfEditor(p);
       grid.appendChild(c);
     });
   }catch(e){}
@@ -758,33 +758,47 @@ const PROF_FIELDS=[
 ];
 
 function openProfEditor(p){
-  const data={id:p? p.id : 'custom_'+Date.now(),name:'',layer_height:0.2,perimeters:2,
-    top_solid_layers:5,bottom_solid_layers:3,external_perimeter_speed:160,
-    perimeter_speed:200,infill_speed:200,default_infill:15,description:'',...(p||{})};
-  $('matModalTitle').textContent=p?('✏️ '+p.name):'➕ Nuovo profilo di stampa';
-  $('matDelete').hidden=!p||p.builtin===true;
+  // se è builtin: copia i valori per creare un override custom
+  const data = p ? {...p} : {};
+  if(p && p.builtin){
+    data.id = p.id + '_custom';
+    data.name = (p.name||'') + ' (modificato)';
+    data.builtin = false;
+  }
+  if(!p){
+    data.id='custom_'+Date.now();
+    data.name='';data.layer_height=0.2;data.perimeters=2;
+    data.top_solid_layers=5;data.bottom_solid_layers=3;
+    data.external_perimeter_speed=160;data.perimeter_speed=200;
+    data.infill_speed=200;data.default_infill=15;data.description='';
+  }
+  $('matModalTitle').textContent=(p&&p.builtin?'✏️ Copia: ':'✏️ ')+(data.name||'Nuovo profilo');
+  $('matDelete').hidden=!(p&&!p.builtin);
   const body=$('matModalBody');body.innerHTML='';
   PROF_FIELDS.forEach(([key,label,type,def])=>{
     const l=document.createElement('label');l.className='field';
-    l.innerHTML=`<span>${label}</span>`;
-    if(type==='select'){
-      const sel=document.createElement('select');sel.id='mf_'+key;
-      def.forEach(opt=>{
-        const o=document.createElement('option');o.value=opt;o.textContent=opt;
-        if(data[key]===opt)o.selected=true;
-        sel.appendChild(o);
-      });
-      l.appendChild(sel);
-    }else if(type==='checkbox'){
+    if(type==='checkbox'){
       l.className='checkrow';
       const cb=document.createElement('input');cb.type='checkbox';cb.id='mf_'+key;
       cb.checked=!!data[key];
       l.appendChild(cb);l.appendChild(document.createTextNode(' '+label));
     }else{
-      const inp=document.createElement('input');
-      inp.type=type;inp.id='mf_'+key;inp.value=data[key]!==undefined?data[key]:def;
-      if(type==='number'){inp.step='0.01'}
-      l.appendChild(inp);
+      l.innerHTML=`<span>${label}</span>`;
+      if(type==='select'){
+        const sel=document.createElement('select');sel.id='mf_'+key;
+        def.forEach(opt=>{
+          const o=document.createElement('option');o.value=opt;o.textContent=opt;
+          if(data[key]===opt)o.selected=true;
+          sel.appendChild(o);
+        });
+        l.appendChild(sel);
+      }else{
+        const inp=document.createElement('input');
+        inp.type=type;inp.id='mf_'+key;
+        inp.value=data[key]!==undefined&&data[key]!==null?data[key]:(def!==undefined?def:'');
+        if(type==='number'){inp.step='0.01'}
+        l.appendChild(inp);
+      }
     }
     body.appendChild(l);
   });
@@ -923,6 +937,116 @@ document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
   if(name==='filamento')refreshFilament();
   if(name==='stats')refreshStats();
 }));
+
+
+/* ============================ GCODE VIEWER ============================ */
+const GCODE_TYPE_COLORS={
+  'p':0x4fc3f7,'e':0x0288d1,
+  'i':0x66bb6a,'s':0x43a047,'t':0x2e7d32,
+  'u':0xffb74d,'v':0xff9800,
+  'k':0x78909c,'b':0x90a4ae,
+  'g':0xab47bc,'f':0x7e57c2,
+  'c':0xe0e0e0,'x':0x546e7a,'w':0xff7043
+};
+const GCODE_TYPE_NAMES={
+  'p':'Perimetro','e':'Parete esterna','i':'Infill','s':'Infill solido',
+  't':'Top','u':'Supporto','v':'Interface','k':'Skirt','b':'Brim',
+  'g':'Bridge','f':'Gap fill','c':'Altro','x':'Wipe','w':'Tower'
+};
+let GCODE_V=null;
+
+async function openGcodeViewer(name){
+  UI.openModal('viewerModal');
+  $('viewerTitle').textContent='📄 '+name;
+  try{
+    const r=await jfetch('/gcodes/'+encodeURIComponent(name)+'/preview');
+    const data=await r.json();
+    if(!data.layers||!data.layers.length){toast('GCODE vuoto','','err');return}
+
+    const canvas=$('stlCanvas');
+    const cvw=Math.min(window.innerWidth*.92,820),cvh=Math.min(window.innerHeight*.55,500);
+    canvas.width=cvw;canvas.height=cvh;canvas.style.height=cvh+'px';
+
+    if(GCODE_V){GCODE_V.rend.dispose();cancelAnimationFrame(GCODE_V.raf)}
+
+    const sc=new THREE.Scene();
+    sc.background=new THREE.Color(0x05070a);
+    const grid=new THREE.GridHelper(256,16,0x1a2a38,0x111a22);
+    sc.add(grid);
+
+    const cam=new THREE.PerspectiveCamera(50,cvw/cvh,.1,3000);
+    const controls=new THREE.OrbitControls(cam,canvas);
+    controls.target.set(128,20,128);
+    cam.position.set(128,250,450);
+    controls.update();
+
+    const rend=new THREE.WebGLRenderer({canvas,antialias:true});
+    rend.setSize(cvw,cvh);
+
+    let allSegs=[];
+    data.layers.forEach(l=>{l.segs.forEach(s=>allSegs.push(s))});
+    if(allSegs.length>60000){
+      const step=Math.ceil(allSegs.length/60000);
+      allSegs=allSegs.filter((_,i)=>i%step===0);
+    }
+
+    const typeGroups={};
+    const typesUsed=new Set();
+    for(const seg of allSegs)typesUsed.add(seg.t);
+
+    for(const t of typesUsed){
+      const segs=allSegs.filter(s=>s.t===t);
+      if(!segs.length)continue;
+      const geo=new THREE.BufferGeometry();
+      const pos=new Float32Array(segs.length*6);
+      const col=new Float32Array(segs.length*6);
+      const c=new THREE.Color(GCODE_TYPE_COLORS[t]||0xcccccc);
+      segs.forEach((s,i)=>{
+        pos[i*6]=s.x1;pos[i*6+1]=0;pos[i*6+2]=s.y1;
+        pos[i*6+3]=s.x2;pos[i*6+4]=0;pos[i*6+5]=s.y2;
+        for(let j=0;j<2;j++){col[i*6+j*3]=c.r;col[i*6+j*3+1]=c.g;col[i*6+j*3+2]=c.b}
+      });
+      geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+      geo.setAttribute('color',new THREE.BufferAttribute(col,3));
+      const mat=new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:.92});
+      const lines=new THREE.LineSegments(geo,mat);
+      lines.rotation.x=-Math.PI/2;
+      lines.position.set(0,0,256);
+      sc.add(lines);
+      typeGroups[t]=lines;
+    }
+
+    GCODE_V={rend,raf:0,typeGroups,controls,cam,canvas,scene:sc};
+    (function loop(){controls.update();rend.render(sc,cam);GCODE_V.raf=requestAnimationFrame(loop)})();
+
+    // legenda
+    let leg=document.getElementById('gcodeLegend');
+    if(!leg){
+      leg=document.createElement('div');leg.id='gcodeLegend';
+      leg.style.cssText='display:flex;gap:14px;flex-wrap:wrap;font-size:.75rem;color:var(--txt-dim);padding:10px 20px;border-top:1px solid var(--border)';
+      canvas.parentElement.appendChild(leg);
+    }
+    leg.hidden=false;
+    let html='';
+    for(const t of typesUsed){
+      const hex='#'+new THREE.Color(GCODE_TYPE_COLORS[t]||0xcccccc).getHexString();
+      const nm=GCODE_TYPE_NAMES[t]||t;
+      html+=`<span data-t="${t}" style="cursor:pointer;user-select:none"><i style="display:inline-block;width:16px;height:3px;background:${hex};margin-right:5px;vertical-align:middle;border-radius:2px"></i>${nm}</span>`;
+    }
+    html+=`<span style="margin-left:auto;color:var(--txt-faint)">${data.total_layers} layer · ${(allSegs.length/1000).toFixed(1)}k seg</span>`;
+    leg.innerHTML=html;
+    leg.querySelectorAll('span[data-t]').forEach(sp=>{
+      sp.onclick=()=>{
+        const t=sp.dataset.t;
+        const g=typeGroups[t];
+        if(g){g.visible=!g.visible;sp.style.opacity=g.visible?'1':'.35'}
+      };
+    });
+  }catch(e){
+    console.error('gcode viewer:',e);
+    toast('GCODE viewer',String(e),'err');
+  }
+}
 
 initCam();
 boot();
