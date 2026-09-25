@@ -371,17 +371,71 @@ function openViewer(name){
     reset();
     const rend=new THREE.WebGLRenderer({canvas,antialias:true});
     rend.setSize(cvw,cvh);
-    V={rend,raf:0,wire:false,spin:false};
+
+    // ---- ROTAZIONE DEL PEZZO (per lo slicing) ----
+    let rot={x:0,y:0,z:0};
+    const updateRotLbl=()=>{
+      $('rotXLbl').textContent=(rot.x%360)+'°';
+      $('rotYLbl').textContent=(rot.y%360)+'°';
+      $('rotZLbl').textContent=(rot.z%360)+'°';
+    };
+    const applyRot=()=>{
+      // mesh.rotation è in radianti, in ordine XYZ di three.js
+      // il pezzo parte con rotation.x=-PI/2 (STL→three.js)
+      // la rotazione UTENTE si applica DOPO: useremo rot.x per ruotare
+      // intorno all'asse di stampa, che in three.js è Y (up)
+      mesh.rotation.set(0,0,0);
+      mesh.rotation.x=-Math.PI/2;  // STL Z-up → three Y-up
+      mesh.rotation.y=THREE.MathUtils.degToRad(rot.z);  // Z gcode = ruota sul piatto
+      mesh.rotation.x+=THREE.MathUtils.degToRad(rot.x); // X = tilt
+      mesh.rotation.z+=THREE.MathUtils.degToRad(rot.y); // Y = tilt altro asse
+      // riposiziona per centrare sul piatto
+      const bb2=new THREE.Box3().setFromObject(mesh);
+      const c2=bb2.getCenter(new THREE.Vector3());
+      mesh.position.sub(c2);  // centro il pezzo sul (0,0,0)
+      mesh.position.y+=(bb2.max.y-bb2.min.y)/2;  // alza per appoggiarlo sul piatto
+      updateRotLbl();
+    };
+
+    $('rotXn').onclick=()=>{rot.x-=90;applyRot()};
+    $('rotXp').onclick=()=>{rot.x+=90;applyRot()};
+    $('rotYn').onclick=()=>{rot.y-=90;applyRot()};
+    $('rotYp').onclick=()=>{rot.y+=90;applyRot()};
+    $('rotZn').onclick=()=>{rot.z-=90;applyRot()};
+    $('rotZp').onclick=()=>{rot.z+=90;applyRot()};
+    $('rotReset').onclick=()=>{rot={x:0,y:0,z:0};applyRot()};
+    $('rotFlat').onclick=()=>{
+      // trova la faccia più grande e appoggiala sul piatto
+      // semplificazione: ruota finché l'estensione Y (altezza) è minima
+      let bestRot={x:rot.x,y:rot.y,z:rot.z};
+      let bestH=Infinity;
+      for(let rx=-180;rx<=180;rx+=90){
+        for(let ry=-180;ry<=180;ry+=90){
+          // stima: l'altezza dipende da quale asse STL punta in su
+          // semplificato: prova le 8 rotazioni e trova quella con altezza minore
+          const hEst=rx===0?size.z:(rx===180?size.z:(ry===0?size.y:size.x));
+          if(hEst<bestH){bestH=hEst;bestRot={x:rx,y:ry,z:rot.z}}
+        }
+      }
+      rot=bestRot;applyRot();
+      toast('Lay flat','Pezzo appoggiato sulla faccia più stabile','ok',2500);
+    };
+
+    V={rend,raf:0,wire:false,spin:false,rot:rot,mesh:mesh};
     $('vWire').onclick=()=>{V.wire=!V.wire;mat.wireframe=V.wire;$('vWire').classList.toggle('primary',V.wire)};
     $('vSpin').onclick=()=>{V.spin=!V.spin;controls.autoRotate=V.spin;$('vSpin').classList.toggle('primary',V.spin)};
     $('vReset').onclick=reset;
-    $('vSlice').onclick=()=>{UI.closeModal('viewerModal');openSliceModal(name)};
+    $('vSlice').onclick=()=>{
+      UI.closeModal('viewerModal');
+      openSliceModal(name,V.rot);
+    };
+    applyRot();
     (function loop(){controls.update();rend.render(sc,cam);V.raf=requestAnimationFrame(loop)})();
   }).catch(e=>toast('Viewer','impossibile caricare il modello','err'));
 }
 
 /* ============================ SLICING ============================ */
-let sliceProfiles={},sliceJobPoll=null,sliceModel=null;
+let sliceProfiles={},sliceJobPoll=null,sliceModel=null,sliceRot={x:0,y:0,z:0};
 async function loadSliceProfiles(){
   try{
     const r=await jfetch('/slice/profiles');const j=await r.json();
@@ -411,9 +465,13 @@ function onProfileChange(){
   if(p&&!$('slInfill').value)$('slInfill').placeholder=p.default_infill;
 }
 $('slProfile').addEventListener('change',onProfileChange);
-function openSliceModal(name){
+function openSliceModal(name,rot){
   sliceModel=name;
+  sliceRot=rot||{x:0,y:0,z:0};
   $('sliceTitle').textContent='🔪 Slice — '+name;
+  if(sliceRot.x||sliceRot.y||sliceRot.z){
+    $('sliceTitle').textContent+=' (X'+sliceRot.x+'° Y'+sliceRot.y+'° Z'+sliceRot.z+'°)';
+  }
   $('jobPanel').hidden=true;
   UI.openModal('sliceModal');
 }
@@ -422,7 +480,8 @@ $('slGo').onclick=()=>{
     material:$('slMat').value,
     infill:parseInt($('slInfill').value||'')||undefined,
     supports:$('slSupp').checked,
-    transfer:$('slTransfer').checked};
+    transfer:$('slTransfer').checked,
+    rotate_x:sliceRot.x||0,rotate_y:sliceRot.y||0,rotate_z:sliceRot.z||0};
   jfetch('/models/'+encodeURIComponent(sliceModel)+'/slice',{method:'POST',body:JSON.stringify(body)})
     .then(r=>r.json()).then(j=>{
       if(!j.ok){toast('Slice rifiutato',j.detail||'slicer non disponibile','err');return}

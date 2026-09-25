@@ -472,7 +472,10 @@ def create_app(ctx) -> FastAPI:
                                         material=body.get("material", "pla"),
                                         infill=int(infill) if infill is not None else None,
                                         supports=bool(body.get("supports", False)),
-                                        transfer=bool(body.get("transfer", True)))
+                                        transfer=bool(body.get("transfer", True)),
+                                        rotate_x=float(body.get("rotate_x", 0) or 0),
+                                        rotate_y=float(body.get("rotate_y", 0) or 0),
+                                        rotate_z=float(body.get("rotate_z", 0) or 0))
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         return {"ok": True, "job": job.public()}

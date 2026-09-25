@@ -124,6 +124,9 @@ class SliceJob:
     infill: Optional[int] = None      # None = default del profilo
     supports: bool = False
     transfer: bool = True
+    rotate_x: float = 0.0              # gradi, orientamento del pezzo
+    rotate_y: float = 0.0
+    rotate_z: float = 0.0
     state: str = "queued"          # queued | running | done | error
     created: float = field(default_factory=time.time)
     finished: Optional[float] = None
@@ -137,7 +140,9 @@ class SliceJob:
                 "profile": self.profile,
                 "material": self.material, "infill": self.infill,
                 "supports": self.supports,
-                "transfer": self.transfer, "gcode": self.gcode,
+                "transfer": self.transfer,
+                "rotate_x": self.rotate_x, "rotate_y": self.rotate_y,
+                "rotate_z": self.rotate_z, "gcode": self.gcode,
                 "duration_s": self.duration_s, "error": self.error,
                 "log_tail": self.log_tail[-800:]}
 
@@ -197,7 +202,10 @@ class Slicer:
                        material=str(params.get("material", "pla")).lower(),
                        infill=infill,
                        supports=bool(params.get("supports", False)),
-                       transfer=bool(params.get("transfer", True)))
+                       transfer=bool(params.get("transfer", True)),
+                       rotate_x=float(params.get("rotate_x", 0) or 0),
+                       rotate_y=float(params.get("rotate_y", 0) or 0),
+                       rotate_z=float(params.get("rotate_z", 0) or 0))
         valid = set(MATERIALS.keys())
         if self._matman:
             valid |= {m["id"] for m in self._matman.list_materials()}
@@ -280,7 +288,16 @@ class Slicer:
             if not preset_path.is_file():
                 raise FileNotFoundError(f"preset mancante: {preset_file}")
             cmd += ["--load", str(preset_path)]
-        cmd += ["--load", str(override),
+        # orientamento del pezzo (gradi)
+        if job.rotate_x:
+            cmd += ["--rotate-x", str(job.rotate_x)]
+        if job.rotate_y:
+            cmd += ["--rotate-y", str(job.rotate_y)]
+        if job.rotate_z:
+            cmd += ["--rotate", str(job.rotate_z)]
+        # centra sul piatto
+        cmd += ["--center", "128,128",
+                "--load", str(override),
                 "--slice", str(model_path),
                 "-o", str(out_path)]
         log.info("Slicing %s (profilo %s): %s", job.id, job.profile,

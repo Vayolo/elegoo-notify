@@ -211,12 +211,35 @@
   <div class="mbox wide viewer-box">
     <div class="mhead"><h3 id="viewerTitle">—</h3><button class="btn ghost sm" onclick="UI.closeModal('viewerModal')">✖</button></div>
     <canvas id="stlCanvas"></canvas>
-    <div class="vtools">
-      <button class="btn sm" id="vWire">⬡ Wireframe</button>
-      <button class="btn sm" id="vSpin">↻ Auto-rotate</button>
-      <button class="btn sm" id="vReset">⊙ Reset vista</button>
-      <button class="btn primary sm" id="vSlice">🔪 Slice</button>
-      <span class="vhint">trascina = ruota · rotella = zoom · destro = pan</span>
+    <div class="vtools" style="flex-wrap:wrap;gap:6px;padding:12px 20px">
+      <div style="display:flex;gap:4px;align-items:center">
+        <span style="font-size:.72rem;color:var(--txt-faint);margin-right:4px">X:</span>
+        <button class="btn sm" id="rotXn">−90°</button>
+        <button class="btn sm" id="rotXp">+90°</button>
+        <span id="rotXLbl" style="font-size:.78rem;font-family:var(--mono);min-width:38px;color:var(--accent)">0°</span>
+      </div>
+      <div style="display:flex;gap:4px;align-items:center">
+        <span style="font-size:.72rem;color:var(--txt-faint);margin-right:4px">Y:</span>
+        <button class="btn sm" id="rotYn">−90°</button>
+        <button class="btn sm" id="rotYp">+90°</button>
+        <span id="rotYLbl" style="font-size:.78rem;font-family:var(--mono);min-width:38px;color:var(--accent)">0°</span>
+      </div>
+      <div style="display:flex;gap:4px;align-items:center">
+        <span style="font-size:.72rem;color:var(--txt-faint);margin-right:4px">Z:</span>
+        <button class="btn sm" id="rotZn">−90°</button>
+        <button class="btn sm" id="rotZp">+90°</button>
+        <span id="rotZLbl" style="font-size:.78rem;font-family:var(--mono);min-width:38px;color:var(--accent)">0°</span>
+      </div>
+      <button class="btn sm" id="rotFlat" title="Appoggia la faccia più grande sul piatto">⬇ Lay flat</button>
+      <button class="btn ghost sm" id="rotReset" title="Azzera orientamento">↺ Reset</button>
+      <div style="flex:1"></div>
+      <button class="btn sm" id="vWire">⬡ Wire</button>
+      <button class="btn sm" id="vSpin">↻ Auto</button>
+      <button class="btn sm" id="vReset">⊙ Vista</button>
+      <button class="btn primary sm" id="vSlice">🔪 Slice con questo orientamento</button>
+    </div>
+    <div class="vhint" style="padding:0 20px 12px;font-size:.72rem;color:var(--txt-faint)">
+      trascina = ruota vista · rotella = zoom · destro = pan · i pulsanti X/Y/Z ruotano il PEZZO (influenza lo slicing)
     </div>
   </div>
 </div>
