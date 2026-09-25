@@ -974,13 +974,14 @@ async function openGcodeViewer(name){
     const sc=new THREE.Scene();
     sc.background=new THREE.Color(0x05070a);
     const grid=new THREE.GridHelper(256,16,0x1a2a38,0x111a22);
+    grid.position.set(128,0,128);
     sc.add(grid);
     sc.add(new THREE.HemisphereLight(0xffffff,0x223344,.6));
 
     const cam=new THREE.PerspectiveCamera(50,cvw/cvh,.1,3000);
     const controls=new THREE.OrbitControls(cam,canvas);
-    controls.target.set(128,10,128);
-    cam.position.set(128,200,400);
+    controls.target.set(128,20,128);
+    cam.position.set(128,180,420);
 
     const rend=new THREE.WebGLRenderer({canvas,antialias:true});
     rend.setSize(cvw,cvh);
@@ -1004,8 +1005,7 @@ async function openGcodeViewer(name){
       geo.setAttribute('color',new THREE.BufferAttribute(col,3));
       const mat=new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:.95});
       const mesh=new THREE.LineSegments(geo,mat);
-      mesh.rotation.x=-Math.PI/2;
-      mesh.position.set(0,0,256);
+      // NESSUNA rotazione: il buffer ha già x=gcode_x, y=layer_z(up), z=gcode_y(depth)
       sc.add(mesh);
       layerMeshes.push(mesh);
     });
