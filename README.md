@@ -3,7 +3,7 @@
 [![License: GPL v2](https://img.shields.io/badge/License-GPLv2-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](requirements.txt)
 [![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)](Dockerfile)
-[![Tests](https://img.shields.io/badge/tests-75%20checks-green)](#testing)
+[![Tests](https://img.shields.io/badge/tests-87%20checks-green)](#testing)
 
 **Self-hosted monitoring, Telegram notifications, AI print-failure detection and
 remote control for the Elegoo Centauri Carbon 3D printer.**
@@ -15,32 +15,44 @@ services, no subscriptions. Your printer, your camera frames, your data.
 
 ## What you get
 
-- **Real-time printer link** — native SDCP v3 WebSocket connection with
-  automatic reconnection, heartbeat and multi-URL failover.
+- **Dual driver: stock SDCP OR Klipper/COSMOS** — same features on both:
+  notifications, AI, Telegram, HA, slicing, webcam all work identically.
 - **Telegram notifications with photos** — print started / progress milestones /
-  time-based updates / completed / failed, each with a high-quality snapshot
-  from the printer camera. Rate-limit aware, debounced, critical messages
-  (errors, AI alerts) always go through immediately.
-- **Interactive Telegram commands** — ask for status with a photo, change print
-  speed, toggle the chamber light, list files, start a print, or send a GCODE
-  file directly in the chat; destructive actions require a two-step confirm.
-- **AI print-failure detection** — a two-layer stack:
-  - a small ONNX neural network (ShuffleNetV2 encoder + prototypes, from the
-    [PrintGuard](https://github.com/oliverbravery/PrintGuard) project) scoring
-    every camera frame 0–1, and
-  - pure-OpenCV heuristics (static stringing detector, layer-shift, smoke,
-    per-layer NRMSE analysis inspired by
-    [3DPrintSaviour](https://github.com/Manicben/3DPrintSaviour)).
-- **Optional auto-stop** — on a critical AI alert the service notifies you
-  *before* acting, sends the stop command, then confirms *after* — with photos.
-  Disabled by default: you decide when to arm it.
-- **Home Assistant integration** — 18 entities via MQTT discovery (progress,
-  temperatures, AI risk, buttons, a settable speed number and a light), a
-  ready-made Lovelace dashboard, and a camera that feeds from the service
-  fan-out.
-- **Web dashboard** — lightweight SSE page with live state, progress bar,
-  temperature chart and webcam feed. No build tools, one HTML file.
-- **REST API** — status, commands, GCODE upload, snapshots, SSE event stream.
+  time-based / completed / failed, each with a snapshot from the webcam.
+  Rate-limit aware, debounced, critical messages always go through.
+- **Interactive Telegram commands** — `/status` (with photo), `/foto`, `/ai`,
+  `/pause`, `/resume`, `/stop` (2-step confirm), `/velocita N`, `/luce on|off`,
+  `/link`, `/file`, `/stampa name.gcode`, send a `.gcode` file in the chat.
+- **AI print-failure detection** — two layers:
+  - **ML**: ShuffleNetV2 encoder + prototypes ([PrintGuard](https://github.com/oliverbravery/PrintGuard),
+    GPL-2.0, ~5 MB, CPU) scoring each frame 0–1
+  - **CV heuristics**: static stringing (adaptive baseline), layer-shift,
+    smoke, per-layer NRMSE ([3DPrintSaviour](https://github.com/Manicben/3DPrintSaviour))
+- **Optional auto-stop** — on critical AI alert: notify → stop → confirm, with photos.
+- **3D models & slicing on-the-go** — STL viewer (three.js), drag&drop upload,
+  **PrusaSlicer 2.8.1** bundled in Docker with **official Elegoo profiles**
+  derived from OrcaSlicer `resources/profiles/Elegoo`:
+  - **5 materials** with real data: PLA 210/60°C, PETG 240/70°C, ABS 270/100°C,
+    ASA 260/100°C, TPU 225/35°C (all editable from the web UI)
+  - **6 print profiles** (Standard/Optimal/Fine/Strength/Draft/Extra Draft),
+    each with **34 configurable parameters** (layer, walls, speeds, accel,
+    infill, supports, skirt, bridge…), all editable from the web UI
+  - Custom materials and profiles: create, edit, delete from the dashboard
+- **GCODE viewer** — 3D path visualization with **layer slider**, per-type
+  coloring (perimeter/infill/support/bridge…), play animation, cumulative
+  layer view, all in three.js on the bed grid
+- **Filament tracking** — spool inventory (add/activate/delete), active spool
+  with remaining %, automatic gram deduction on print completion
+- **Statistics** — total prints, success rate, filament used (m + g), print
+  time, material breakdown, last 10 prints with success/fail
+- **Home Assistant** — 18 entities via MQTT discovery (progress, temps, AI risk,
+  buttons, speed number, chamber light), Lovelace dashboard, camera via fan-out
+- **Web dashboard v2** — complete redesign: progress ring, toasts, contextual
+  commands, AI panel with gauges and alert photos, model grid with 3D
+  thumbnails, upload progress bar, event log with filters, auth modal
+- **PWA** — installable as a native app on Android/iOS (service worker + manifest)
+- **REST API** — full CRUD for models, materials, profiles, files, history,
+  stats, filament, AI metrics, snapshots, commands, SSE events.
 
 ## How it works
 
@@ -318,83 +330,27 @@ the printer → start, all from the browser.
   and (if `transfer`) is MD5-uploaded to the printer, ready for
   `POST /print` or the Telegram `/stampa` command.
 - Engine: **PrusaSlicer 2.8.1** CLI (AGPL-3.0, see LICENSE-NOTICE) bundled
-  in the Docker image. Profiles in `slicer-profiles/centauri_carbon/` are
-  derived from the **official Elegoo Centauri Carbon profiles** shipped in
-  OrcaSlicer (`resources/profiles/Elegoo`): the real start/end g-code
-  (M729 nozzle clean, M6211, M83 relative extrusion, prime lines,
-  M749 shutdown sequence) and the official speeds (outer 160 / inner 200 /
-  infill 200 / solid 250 mm/s, travel 500, first layer 50), PLA 210/60,
-  PETG 240/70.
-- Not installed? Every slicing endpoint degrades gracefully (501) and the
-  rest of the service keeps working.
-- Expect a benchy in ~2-6 min on a Celeron-class CPU; big models queue.
-
-## REST API
-
-| Endpoint | Description |
-|---|---|
-| `GET /health` | Service health (no auth) |
-| `GET /status` | Full printer state (JSON) |
-| `GET /photo` | Fresh camera snapshot; add `?roi=1` to overlay the AI region |
-| `GET /video` | MJPEG proxy of the printer camera |
-| `POST /cmd/stop` `/cmd/pause` `/cmd/resume` | Print control |
-| `POST /cmd/speed` | `{"percent": 80}` — set print speed |
-| `POST /cmd/light` | `{"on": true}` — chamber light |
-| `POST /upload` | Multipart GCODE → local store + printer transfer (MD5) |
-| `POST /print` | `{"filename": "x.gcode"}` — start a print |
-| `GET /files` | GCODE files on printer and local store |
-| `GET /api/events` | SSE live event stream (used by the dashboard) |
-| `GET /ai/metrics` | Live detector metrics + per-layer history |
-| `POST /ai/analyze_now` | Diagnostic: one forced analysis, returns detections + metrics |
-| `POST /notify/test` | `{"message": "…"}` / `{"photo": true}` — test the Telegram path |
-
-## AI detection in depth
-
-**Layer 1 — ML detector (primary).** A ShuffleNetV2-x1.0 encoder (~5 MB, ONNX,
-CPU) maps each frame to a 1024-d embedding; a nearest-prototype classifier
-compares it against "success" and "failure" prototypes and produces a 0–1
-defect score (0.5 = decision boundary). Threshold: `ai.ml.threshold` (0.6).
-The preprocessing/classification/scoring are faithful ports of PrintGuard's
-`vision.py` (GPL-2.0, see [LICENSE-NOTICE](LICENSE-NOTICE)).
-
-**Layer 2 — CV heuristics (fallback + complementary).**
-
-- **Spaghetti/stringing** — *static* detector (no frame differencing, so the
-  moving head produces no noise): thin structures isolated with adaptive
-  thresholding + morphology (`thresh − erode`), thinness-filtered contours and
-  non-horizontal Hough lines, evaluated **only around the print object** (the
-  skirt is masked out). An adaptive baseline learns each part's normal amount
-  of thin detail and alerts only above `baseline × 3`.
-- **Layer shift** — diagonal line segments that break the scene's dominant
-  orientation (the webcam sees the bed in perspective, so nothing is compared
-  to absolute 0°/90°).
-- **Smoke** — sharpness drop (Laplacian variance) + brightness shift in the
-  upper region, with slow-adapting baselines.
-- **LayerWatch** (one frame **per layer**, 3DPrintSaviour method) — NRMSE
-  between layer N and N−1 (*score*) and N−5 (*deviance*), computed on the
-  object region with a segmentation threshold fixed on the reference frame:
-  if the object silhouette disappears the verdict is immediate. Verdicts:
-  `detach` (score & deviance > 1.0), `breakage` (Δ > 0.2 both), `runout`
-  (flat for 6+ layers — experimental, off by default). No verdicts before
-  layer 7.
-
-**Fail-safe auto-stop** (`ai.auto_stop`): 1) critical notification with the
-anomaly photo *before* acting → 2) `Cmd 130` stop → 3) confirmation *after*,
-with a fresh photo. If the stop fails you get an explicit
-"INTERVENI MANUALMENTE!" message.
-
-### Integrating the ML model
-
-Model binaries are **not** in this repository (licence and size). One command
-fetches them from the upstream project:
-
-```bash
-python3 scripts/download_models.py   # → models/encoder_float32.onnx, prototypes.json, metadata.json
-```
-
-Restart the service and check `docker logs` for `Modello ML caricato`
-("ML model loaded"), or `curl :8766/ai/metrics`. Without the models the
-service simply runs the CV stack.
+  in the Docker image (~1.3 GB with webkit).
+- Profiles derived from **official Elegoo Centauri Carbon** (OrcaSlicer
+  `resources/profiles/Elegoo`):
+  - `centauri_carbon/` — stock firmware (SDCP): M729, M6211, M83, prime lines
+  - `centauri_carbon_cosmos/` — COSMOS/Klipper: `PRINT_START BED= EXTRUDER= CHAMBER=0`
+    / `PRINT_END` (CHAMBER=0 always required: jinja2 strict)
+- **5 materials** built-in with real Elegoo data (all editable via web UI):
+  PLA 210/60°C, PETG 240/70°C, ABS 270/100°C, ASA 260/100°C, TPU 225/35°C
+- **6 print profiles** (all editable, clicking a builtin creates a custom
+  override): Standard 0.20, Optimal 0.16, Fine 0.12, Strength 0.20 (6 walls),
+  Draft 0.24, Extra Draft 0.28
+- **34 parameters per profile**: layer heights, wall count, top/bottom layers,
+  11 speeds, 3 accelerations, infill density + pattern (7 options),
+  extrusion widths, support settings, skirt/brim, bridge flow, thin walls,
+  seam position, avoid crossing
+- **GCODE viewer** (`/gcodes/{name}/preview`): 3D path with layer slider,
+  type coloring, play animation, cumulative view
+- Custom materials/profiles stored in `data/custom_materials.json` and
+  `data/custom_profiles.json` (persisted)
+- Not installed? Slicing endpoints degrade gracefully (501).
+- Expect a benchy in ~2-6 min on a Celeron-class CPU.
 
 ### Tuning on your own camera
 
@@ -418,12 +374,12 @@ Four offline acceptance suites (Telegram in dry-run, printer simulated by
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-python3 tests/run_ws_tests.py      # 24 checks: events → notifications+photos, REST, upload, print
+python3 tests/run_ws_tests.py      # 26 checks: events → notifications+photos, REST, upload, print
 python3 tests/run_ai_tests.py     # 11 checks: spaghetti → critical alert → auto-stop fail-safe, smoke
 python3 tests/run_layer_tests.py  # 10 checks: LayerWatch score/deviance → detach
 python3 tests/run_ml_test.py      # 4 checks: ML loads, real healthy frame scores low
 python3 tests/run_moonraker_tests.py  # 13 checks: full stack on a Klipper/COSMOS printer
-python3 tests/run_slicer_tests.py   # 11 checks: models upload/view/slice pipeline (+ real slice if prusa-slicer installed)
+python3 tests/run_slicer_tests.py   # 14 checks: models upload/view/slice pipeline (+ real slice if prusa-slicer installed)
 ```
 
 The simulator implements the real SDCP payloads (see [docs/examples.md]
