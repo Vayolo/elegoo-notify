@@ -42,84 +42,98 @@ security = HTTPBasic(auto_error=False)
 
 
 def _parse_gcode(path: Path, max_layers: int = 500) -> dict:
-    """Parse un file GCODE e produce segmenti per il viewer 3D.
-    Ritorna {layers: [{z, segs: [{x1,y1,x2,y2,t}], stats}]} colorati per tipo."""
-    TYPE_COLORS = {
-        "perimeter": "p", "external perimeter": "e", "infill": "i",
-        "solid infill": "s", "top solid infill": "t", "support": "u",
-        "support interface": "v", "skirt": "k", "brim": "b", "bridge": "g",
-        "gap fill": "f", "tower": "w", "custom": "c", "wipe": "x",
+    """Parse GCODE per il viewer 3D. Usa ;LAYER_CHANGE come confine layer.
+    Ritorna {layers: [{n, z, segs: [{x1,y1,x2,y2,t}], types}]}."""
+    TYPE_CODES = {
+        "perimeter": "p", "external perimeter": "e",
+        "infill": "i", "solid infill": "s", "top solid infill": "t",
+        "support material": "u", "support interface": "v",
+        "skirt": "k", "brim": "b", "bridge": "g", "gap fill": "f",
+        "tower": "w", "wipe tower": "w", "custom": "c",
     }
-    layers = {}
-    cur_type = "custom"
-    cur_z = 0.0
-    last_x = None
-    last_y = None
-    layer_idx = -1
+    layers = []
+    cur_type = "c"
+    cur_layer = None
+    layer_num = -1
+    last_x = last_y = None
+    in_layer = False
     total_lines = 0
 
     with open(path, "r", encoding="utf-8", errors="replace") as f:
         for line in f:
             total_lines += 1
-            line = line.strip()
-            if line.startswith(";TYPE:"):
-                cur_type = line[6:].strip().lower()
+            stripped = line.strip()
+
+            # --- ;LAYER_CHANGE → nuovo layer ---
+            if stripped == ";LAYER_CHANGE":
+                layer_num += 1
+                if layer_num >= max_layers:
+                    break
+                cur_layer = {"n": layer_num, "z": 0, "segs": [], "types": set()}
+                layers.append(cur_layer)
+                last_x = last_y = None
+                in_layer = True
                 continue
-            if not line or line.startswith(";") or line.startswith("M"):
+
+            if not in_layer:
                 continue
-            # coordinate G1/G2/G3
-            if line.startswith("G1") or line.startswith("G0"):
-                parts = line.split()
+
+            # --- ;TYPE: → cambia tipo ---
+            if stripped.startswith(";TYPE:"):
+                cur_type = TYPE_CODES.get(stripped[6:].strip().lower(), "c")
+                continue
+
+            # --- commenti: salta ---
+            if stripped.startswith(";") or not stripped:
+                continue
+
+            # --- comandi di movimento ---
+            if stripped.startswith("G1") or stripped.startswith("G0"):
                 x = y = z = None
                 has_e = False
-                for p in parts[1:]:
-                    if p.startswith("X"):
-                        try: x = float(p[1:])
-                        except: pass
-                    elif p.startswith("Y"):
-                        try: y = float(p[1:])
-                        except: pass
-                    elif p.startswith("Z"):
-                        try: z = float(p[1:])
-                        except: pass
-                    elif p.startswith("E"):
+                for part in stripped.split()[1:]:
+                    if part.startswith("X") and len(part) > 1:
+                        try: x = float(part[1:])
+                        except ValueError: pass
+                    elif part.startswith("Y") and len(part) > 1:
+                        try: y = float(part[1:])
+                        except ValueError: pass
+                    elif part.startswith("Z") and len(part) > 1:
+                        try: z = float(part[1:])
+                        except ValueError: pass
+                    elif part.startswith("E"):
                         has_e = True
-                if z is not None and z != cur_z:
-                    cur_z = z
-                    layer_idx += 1
-                    if layer_idx > max_layers:
-                        break
-                    layers[layer_idx] = {"z": z, "segs": [], "types": set()}
-                    last_x = last_y = None
-                if x is not None and y is not None and has_e:
-                    if last_x is not None and last_y is not None:
-                        t = TYPE_COLORS.get(cur_type, "c")
-                        if layer_idx not in layers:
-                            layers[layer_idx] = {"z": cur_z, "segs": [], "types": set()}
-                        layers[layer_idx]["segs"].append({
-                            "x1": round(last_x, 2), "y1": round(last_y, 2),
-                            "x2": round(x, 2), "y2": round(y, 2), "t": t})
-                        layers[layer_idx]["types"].add(t)
-                        if len(layers[layer_idx]["segs"]) > 5000:
-                            layers[layer_idx]["segs"].pop(0)  # limita memoria per layer enorme
-                    last_x = x
-                    last_y = y
-                elif x is not None and y is not None:
-                    last_x = x
-                    last_y = y
 
-    out_layers = []
-    for idx in sorted(layers.keys()):
-        l = layers[idx]
-        out_layers.append({
-            "n": idx, "z": l["z"],
-            "segs": l["segs"],
-            "types": sorted(l["types"])})
+                # aggiorna Z del layer se presente nel comando
+                if z is not None and cur_layer:
+                    cur_layer["z"] = max(cur_layer["z"], z)
+
+                # crea segmento se ha coordinate + estrusione
+                if x is not None and y is not None and has_e:
+                    if last_x is not None and last_y is not None and cur_layer:
+                        cur_layer["segs"].append({
+                            "x1": round(last_x, 2), "y1": round(last_y, 2),
+                            "x2": round(x, 2), "y2": round(y, 2),
+                            "t": cur_type})
+                        cur_layer["types"].add(cur_type)
+                    last_x, last_y = x, y
+                elif x is not None and y is not None:
+                    last_x, last_y = x, y
+
+    # filtra layer vuoti e limita memoria per layer
+    out = []
+    for l in layers:
+        if l["segs"]:
+            if len(l["segs"]) > 8000:
+                l["segs"] = l["segs"][:8000]
+            out.append({"n": l["n"], "z": l["z"], "segs": l["segs"],
+                        "types": sorted(l["types"])})
+
     return {
-        "layers": out_layers,
+        "layers": out,
         "total_lines": total_lines,
-        "total_layers": len(out_layers),
-        "max_z": max((l["z"] for l in out_layers), default=0),
+        "total_layers": len(out),
+        "max_z": max((l["z"] for l in out), default=0),
     }
 
 

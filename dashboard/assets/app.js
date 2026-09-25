@@ -939,109 +939,184 @@ document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
 }));
 
 
-/* ============================ GCODE VIEWER ============================ */
-const GCODE_TYPE_COLORS={
+/* ============================ GCODE VIEWER (con layer slider) ============================ */
+const GC_TYPE_COLORS={
   'p':0x4fc3f7,'e':0x0288d1,
   'i':0x66bb6a,'s':0x43a047,'t':0x2e7d32,
   'u':0xffb74d,'v':0xff9800,
   'k':0x78909c,'b':0x90a4ae,
   'g':0xab47bc,'f':0x7e57c2,
-  'c':0xe0e0e0,'x':0x546e7a,'w':0xff7043
+  'w':0xff7043,'c':0xe0e0e0
 };
-const GCODE_TYPE_NAMES={
+const GC_TYPE_NAMES={
   'p':'Perimetro','e':'Parete esterna','i':'Infill','s':'Infill solido',
   't':'Top','u':'Supporto','v':'Interface','k':'Skirt','b':'Brim',
-  'g':'Bridge','f':'Gap fill','c':'Altro','x':'Wipe','w':'Tower'
+  'g':'Bridge','f':'Gap fill','w':'Tower','c':'Altro'
 };
-let GCODE_V=null;
+let GCV=null;
 
 async function openGcodeViewer(name){
   UI.openModal('viewerModal');
   $('viewerTitle').textContent='📄 '+name;
+
   try{
     const r=await jfetch('/gcodes/'+encodeURIComponent(name)+'/preview');
     const data=await r.json();
     if(!data.layers||!data.layers.length){toast('GCODE vuoto','','err');return}
 
     const canvas=$('stlCanvas');
-    const cvw=Math.min(window.innerWidth*.92,820),cvh=Math.min(window.innerHeight*.55,500);
+    const cvw=Math.min(window.innerWidth*.92,820);
+    const cvh=Math.min(window.innerHeight*.45,420);
     canvas.width=cvw;canvas.height=cvh;canvas.style.height=cvh+'px';
 
-    if(GCODE_V){GCODE_V.rend.dispose();cancelAnimationFrame(GCODE_V.raf)}
+    if(GCV){GCV.rend.dispose();cancelAnimationFrame(GCV.raf)}
 
     const sc=new THREE.Scene();
     sc.background=new THREE.Color(0x05070a);
     const grid=new THREE.GridHelper(256,16,0x1a2a38,0x111a22);
     sc.add(grid);
+    sc.add(new THREE.HemisphereLight(0xffffff,0x223344,.6));
 
     const cam=new THREE.PerspectiveCamera(50,cvw/cvh,.1,3000);
     const controls=new THREE.OrbitControls(cam,canvas);
-    controls.target.set(128,20,128);
-    cam.position.set(128,250,450);
-    controls.update();
+    controls.target.set(128,10,128);
+    cam.position.set(128,200,400);
 
     const rend=new THREE.WebGLRenderer({canvas,antialias:true});
     rend.setSize(cvw,cvh);
 
-    let allSegs=[];
-    data.layers.forEach(l=>{l.segs.forEach(s=>allSegs.push(s))});
-    if(allSegs.length>60000){
-      const step=Math.ceil(allSegs.length/60000);
-      allSegs=allSegs.filter((_,i)=>i%step===0);
-    }
-
-    const typeGroups={};
-    const typesUsed=new Set();
-    for(const seg of allSegs)typesUsed.add(seg.t);
-
-    for(const t of typesUsed){
-      const segs=allSegs.filter(s=>s.t===t);
-      if(!segs.length)continue;
+    // pre-crea un THREE.LineSegments per OGNI layer
+    const layerMeshes=[];
+    data.layers.forEach((layer,li)=>{
       const geo=new THREE.BufferGeometry();
+      const segs=layer.segs;
       const pos=new Float32Array(segs.length*6);
       const col=new Float32Array(segs.length*6);
-      const c=new THREE.Color(GCODE_TYPE_COLORS[t]||0xcccccc);
       segs.forEach((s,i)=>{
-        pos[i*6]=s.x1;pos[i*6+1]=0;pos[i*6+2]=s.y1;
-        pos[i*6+3]=s.x2;pos[i*6+4]=0;pos[i*6+5]=s.y2;
-        for(let j=0;j<2;j++){col[i*6+j*3]=c.r;col[i*6+j*3+1]=c.g;col[i*6+j*3+2]=c.b}
+        pos[i*6]=s.x1;pos[i*6+1]=layer.z;pos[i*6+2]=s.y1;
+        pos[i*6+3]=s.x2;pos[i*6+4]=layer.z;pos[i*6+5]=s.y2;
+        const c=new THREE.Color(GC_TYPE_COLORS[s.t]||0xcccccc);
+        for(let j=0;j<2;j++){
+          col[i*6+j*3]=c.r;col[i*6+j*3+1]=c.g;col[i*6+j*3+2]=c.b;
+        }
       });
       geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
       geo.setAttribute('color',new THREE.BufferAttribute(col,3));
-      const mat=new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:.92});
-      const lines=new THREE.LineSegments(geo,mat);
-      lines.rotation.x=-Math.PI/2;
-      lines.position.set(0,0,256);
-      sc.add(lines);
-      typeGroups[t]=lines;
-    }
+      const mat=new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:.95});
+      const mesh=new THREE.LineSegments(geo,mat);
+      mesh.rotation.x=-Math.PI/2;
+      mesh.position.set(0,0,256);
+      sc.add(mesh);
+      layerMeshes.push(mesh);
+    });
 
-    GCODE_V={rend,raf:0,typeGroups,controls,cam,canvas,scene:sc};
-    (function loop(){controls.update();rend.render(sc,cam);GCODE_V.raf=requestAnimationFrame(loop)})();
+    GCV={rend,raf:0,controls,cam,canvas,sc,layerMeshes,
+         curLayer:data.layers.length, layers:data.layers};
+    controls.update();
+    (function loop(){controls.update();rend.render(sc,cam);GCV.raf=requestAnimationFrame(loop)})();
+
+    // =================== UI: slider + controlli ===================
+    let ui=document.getElementById('gcSliderUI');
+    if(ui)ui.remove();
+    ui=document.createElement('div');
+    ui.id='gcSliderUI';
+    ui.style.cssText='padding:14px 20px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:10px';
+
+    // riga controlli
+    const ctrl=document.createElement('div');
+    ctrl.style.cssText='display:flex;align-items:center;gap:14px;flex-wrap:wrap';
+    ctrl.innerHTML=`
+      <button class="btn sm" id="gcPlay" title="Play/pause animazione">▶</button>
+      <input type="range" id="gcSlider" min="1" max="${data.layers.length}"
+             value="${data.layers.length}" step="1"
+             style="flex:1;accent-color:var(--accent);height:6px;cursor:pointer">
+      <span id="gcLayerLbl" style="font-size:.85rem;font-family:var(--mono);min-width:120px;text-align:right;color:var(--txt)"></span>`;
+    ui.appendChild(ctrl);
+
+    // riga opzioni
+    const opts=document.createElement('div');
+    opts.style.cssText='display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:.78rem;color:var(--txt-dim)';
+    opts.innerHTML=`
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="gcShowAll" checked style="accent-color:var(--accent)">Mostra tutti i layer sottostanti</label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="gcAnimate" style="accent-color:var(--accent)">Animazione automatica</label>
+      <span style="margin-left:auto;color:var(--txt-faint)">${data.total_layers} layer · Z max ${data.max_z}mm</span>`;
+    ui.appendChild(opts);
 
     // legenda
-    let leg=document.getElementById('gcodeLegend');
-    if(!leg){
-      leg=document.createElement('div');leg.id='gcodeLegend';
-      leg.style.cssText='display:flex;gap:14px;flex-wrap:wrap;font-size:.75rem;color:var(--txt-dim);padding:10px 20px;border-top:1px solid var(--border)';
-      canvas.parentElement.appendChild(leg);
+    const leg=document.createElement('div');
+    leg.id='gcLegend';
+    leg.style.cssText='display:flex;gap:12px;flex-wrap:wrap;font-size:.72rem;color:var(--txt-dim)';
+    const typesAll=new Set();
+    data.layers.forEach(l=>l.types.forEach(t=>typesAll.add(t)));
+    let legHTML='';
+    for(const t of typesAll){
+      const hex='#'+new THREE.Color(GC_TYPE_COLORS[t]||0xcccccc).getHexString();
+      legHTML+=`<span data-t="${t}" style="cursor:pointer;user-select:none"><i style="display:inline-block;width:14px;height:3px;background:${hex};margin-right:4px;vertical-align:middle;border-radius:2px"></i>${GC_TYPE_NAMES[t]||t}</span>`;
     }
-    leg.hidden=false;
-    let html='';
-    for(const t of typesUsed){
-      const hex='#'+new THREE.Color(GCODE_TYPE_COLORS[t]||0xcccccc).getHexString();
-      const nm=GCODE_TYPE_NAMES[t]||t;
-      html+=`<span data-t="${t}" style="cursor:pointer;user-select:none"><i style="display:inline-block;width:16px;height:3px;background:${hex};margin-right:5px;vertical-align:middle;border-radius:2px"></i>${nm}</span>`;
+    leg.innerHTML=legHTML;
+    ui.appendChild(leg);
+
+    canvas.parentElement.appendChild(ui);
+
+    // ---- logica slider ----
+    const slider=$('gcSlider');
+    const lbl=$('gcLayerLbl');
+    const showAll=$('gcShowAll');
+    let playing=false;
+    let playTimer=null;
+
+    function updateVisibility(){
+      const val=parseInt(slider.value);
+      const showBelow=showAll.checked;
+      layerMeshes.forEach((m,i)=>{
+        m.visible=showBelow ? (i < val) : (i === val-1);
+      });
+      const l=data.layers[val-1];
+      lbl.textContent=`layer ${val}/${data.layers.length} · Z=${l?l.z.toFixed(1):'?'}mm`;
     }
-    html+=`<span style="margin-left:auto;color:var(--txt-faint)">${data.total_layers} layer · ${(allSegs.length/1000).toFixed(1)}k seg</span>`;
-    leg.innerHTML=html;
+    slider.oninput=updateVisibility;
+    showAll.onchange=updateVisibility;
+
+    // ---- play/pause ----
+    $('gcPlay').onclick=()=>{
+      playing=!playing;
+      $('gcPlay').textContent=playing?'⏸':'▶';
+      if(playing){
+        let cur=parseInt(slider.value);
+        playTimer=setInterval(()=>{
+          cur++;
+          if(cur>data.layers.length)cur=1;
+          slider.value=cur;
+          updateVisibility();
+        },200);
+      }else{
+        clearInterval(playTimer);playTimer=null;
+      }
+    };
+
+    // ---- toggle legenda ----
     leg.querySelectorAll('span[data-t]').forEach(sp=>{
       sp.onclick=()=>{
         const t=sp.dataset.t;
-        const g=typeGroups[t];
-        if(g){g.visible=!g.visible;sp.style.opacity=g.visible?'1':'.35'}
+        layerMeshes.forEach(m=>{
+          // trova se questo mesh ha segmenti di tipo t
+          const li=layerMeshes.indexOf(m);
+          if(li>=0&&data.layers[li].types.includes(t)){
+            // toggle: salva lo stato
+            if(!m._hidden)m._hidden={};
+            m._hidden[t]=!m._hidden[t];
+            sp.style.opacity=m._hidden[t]?.3:1;
+          }
+        });
+        // semplice: re-render (per ora toggle su tutti i mesh di quel tipo)
+        // TODO: per-type toggle per singolo layer
       };
     });
+
+    updateVisibility();
+
   }catch(e){
     console.error('gcode viewer:',e);
     toast('GCODE viewer',String(e),'err');
@@ -1050,5 +1125,6 @@ async function openGcodeViewer(name){
 
 initCam();
 boot();
+
 sseLoop();
 
