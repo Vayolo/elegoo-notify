@@ -494,6 +494,10 @@ function fileRow(name,size,mtime,local){
     <div class="mt">${size?fmtMB(size):''}${mtime?' · '+timeago(mtime/1000):''}${local?'':' · sulla stampante'}</div></div>
     <div class="ops"></div>`;
   const ops=row.querySelector('.ops');
+  const bG=document.createElement('button');bG.className='btn sm';bG.textContent='👁';
+  bG.title='Anteprima GCODE 3D';
+  bG.onclick=()=>openGcodeViewer(name);
+  ops.appendChild(bG);
   const bP=document.createElement('button');bP.className='btn primary sm';bP.textContent='🖨 Stampa';
   bP.onclick=async()=>{
     try{const r=await jfetch('/print',{method:'POST',body:JSON.stringify({filename:name})});
@@ -716,16 +720,41 @@ $('matAdd').onclick=()=>openMatEditor(null);
 
 // profili di stampa custom
 const PROF_FIELDS=[
-  ['name','Nome','text','Il mio profilo'],
+  ['name','Nome profilo','text','Il mio profilo'],
+  ['description','Descrizione','text',''],
   ['layer_height','Layer (mm)','number',0.2],
-  ['perimeters','Pareti','number',2],
-  ['top_solid_layers','Layer top','number',5],
-  ['bottom_solid_layers','Layer bottom','number',3],
+  ['first_layer_height','1° layer (mm)','number',0.2],
+  ['perimeters','Pareti (perimetri)','number',2],
+  ['top_solid_layers','Layer top solidi','number',5],
+  ['bottom_solid_layers','Layer bottom solidi','number',3],
+  ['seam_position','Posizione giunzione','select',['aligned','nearest','random','rear']],
   ['external_perimeter_speed','Vel. parete esterna mm/s','number',160],
   ['perimeter_speed','Vel. pareti interne mm/s','number',200],
+  ['small_perimeter_speed','Vel. piccoli perimetri mm/s','number',100],
   ['infill_speed','Vel. riempimento mm/s','number',200],
+  ['solid_infill_speed','Vel. infill solido mm/s','number',250],
+  ['top_solid_infill_speed','Vel. top mm/s','number',200],
+  ['first_layer_speed','Vel. 1° layer mm/s','number',50],
+  ['travel_speed','Vel. spostamenti mm/s','number',500],
+  ['bridge_speed','Vel. bridge mm/s','number',50],
+  ['gap_fill_speed','Vel. gap fill mm/s','number',50],
+  ['support_material_speed','Vel. supporti mm/s','number',150],
+  ['default_acceleration','Accelerazione mm/s²','number',5000],
+  ['perimeter_acceleration','Accel. perimetri mm/s²','number',5000],
+  ['infill_acceleration','Accel. riempimento mm/s²','number',5000],
   ['default_infill','Infill default %','number',15],
-  ['description','Descrizione','text',''],
+  ['infill_pattern','Pattern riempimento','select',['rectilinear','grid','triangles','stars','concentric','honeycomb','gyroid']],
+  ['extrusion_width','Larghezza estrusione mm','number',0.42],
+  ['first_layer_extrusion_width','Larghezza 1° layer mm','number',0.5],
+  ['support_material','Supporti','checkbox',0],
+  ['support_material_buildplate_only','Supporti solo dal piatto','checkbox',1],
+  ['support_material_spacing','Spaziatura supporti mm','number',2.5],
+  ['skirt_loops','Giri skirt','number',0],
+  ['skirt_distance','Distanza skirt mm','number',3],
+  ['brim_width','Larghezza brim mm','number',0],
+  ['thin_walls','Pareti sottili','checkbox',0],
+  ['avoid_crossing_perimeters','Evita attraversamenti','checkbox',0],
+  ['bridge_flow_ratio','Flusso bridge','number',0.95],
 ];
 
 function openProfEditor(p){
@@ -738,10 +767,26 @@ function openProfEditor(p){
   PROF_FIELDS.forEach(([key,label,type,def])=>{
     const l=document.createElement('label');l.className='field';
     l.innerHTML=`<span>${label}</span>`;
-    const inp=document.createElement('input');
-    inp.type=type;inp.id='mf_'+key;inp.value=data[key]!==undefined?data[key]:def;
-    if(type==='number'){inp.step='0.01'}
-    l.appendChild(inp);body.appendChild(l);
+    if(type==='select'){
+      const sel=document.createElement('select');sel.id='mf_'+key;
+      def.forEach(opt=>{
+        const o=document.createElement('option');o.value=opt;o.textContent=opt;
+        if(data[key]===opt)o.selected=true;
+        sel.appendChild(o);
+      });
+      l.appendChild(sel);
+    }else if(type==='checkbox'){
+      l.className='checkrow';
+      const cb=document.createElement('input');cb.type='checkbox';cb.id='mf_'+key;
+      cb.checked=!!data[key];
+      l.appendChild(cb);l.appendChild(document.createTextNode(' '+label));
+    }else{
+      const inp=document.createElement('input');
+      inp.type=type;inp.id='mf_'+key;inp.value=data[key]!==undefined?data[key]:def;
+      if(type==='number'){inp.step='0.01'}
+      l.appendChild(inp);
+    }
+    body.appendChild(l);
   });
   editingMat=data;
   UI.openModal('matModal');
@@ -753,9 +798,11 @@ $('matSave').onclick=async()=>{
   if(editingMat && editingMat.id && editingMat.id.startsWith('custom_prof_')){
     // è un profilo di stampa
     const data={...editingMat};
-    PROF_FIELDS.forEach(([key])=>{
+    PROF_FIELDS.forEach(([key,,type])=>{
       const el=$('mf_'+key);if(!el)return;
-      data[key]=el.type==='number'?parseFloat(el.value)||0:el.value;
+      if(type==='checkbox')data[key]=el.checked?1:0;
+      else if(type==='number')data[key]=parseFloat(el.value)||0;
+      else data[key]=el.value;
     });
     try{
       const r=await jfetch('/profiles/'+encodeURIComponent(data.id),{method:'PUT',body:JSON.stringify(data)});

@@ -41,6 +41,88 @@ SSE_TIMEOUT = 20.0
 security = HTTPBasic(auto_error=False)
 
 
+def _parse_gcode(path: Path, max_layers: int = 500) -> dict:
+    """Parse un file GCODE e produce segmenti per il viewer 3D.
+    Ritorna {layers: [{z, segs: [{x1,y1,x2,y2,t}], stats}]} colorati per tipo."""
+    TYPE_COLORS = {
+        "perimeter": "p", "external perimeter": "e", "infill": "i",
+        "solid infill": "s", "top solid infill": "t", "support": "u",
+        "support interface": "v", "skirt": "k", "brim": "b", "bridge": "g",
+        "gap fill": "f", "tower": "w", "custom": "c", "wipe": "x",
+    }
+    layers = {}
+    cur_type = "custom"
+    cur_z = 0.0
+    last_x = None
+    last_y = None
+    layer_idx = -1
+    total_lines = 0
+
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            total_lines += 1
+            line = line.strip()
+            if line.startswith(";TYPE:"):
+                cur_type = line[6:].strip().lower()
+                continue
+            if not line or line.startswith(";") or line.startswith("M"):
+                continue
+            # coordinate G1/G2/G3
+            if line.startswith("G1") or line.startswith("G0"):
+                parts = line.split()
+                x = y = z = None
+                has_e = False
+                for p in parts[1:]:
+                    if p.startswith("X"):
+                        try: x = float(p[1:])
+                        except: pass
+                    elif p.startswith("Y"):
+                        try: y = float(p[1:])
+                        except: pass
+                    elif p.startswith("Z"):
+                        try: z = float(p[1:])
+                        except: pass
+                    elif p.startswith("E"):
+                        has_e = True
+                if z is not None and z != cur_z:
+                    cur_z = z
+                    layer_idx += 1
+                    if layer_idx > max_layers:
+                        break
+                    layers[layer_idx] = {"z": z, "segs": [], "types": set()}
+                    last_x = last_y = None
+                if x is not None and y is not None and has_e:
+                    if last_x is not None and last_y is not None:
+                        t = TYPE_COLORS.get(cur_type, "c")
+                        if layer_idx not in layers:
+                            layers[layer_idx] = {"z": cur_z, "segs": [], "types": set()}
+                        layers[layer_idx]["segs"].append({
+                            "x1": round(last_x, 2), "y1": round(last_y, 2),
+                            "x2": round(x, 2), "y2": round(y, 2), "t": t})
+                        layers[layer_idx]["types"].add(t)
+                        if len(layers[layer_idx]["segs"]) > 5000:
+                            layers[layer_idx]["segs"].pop(0)  # limita memoria per layer enorme
+                    last_x = x
+                    last_y = y
+                elif x is not None and y is not None:
+                    last_x = x
+                    last_y = y
+
+    out_layers = []
+    for idx in sorted(layers.keys()):
+        l = layers[idx]
+        out_layers.append({
+            "n": idx, "z": l["z"],
+            "segs": l["segs"],
+            "types": sorted(l["types"])})
+    return {
+        "layers": out_layers,
+        "total_lines": total_lines,
+        "total_layers": len(out_layers),
+        "max_z": max((l["z"] for l in out_layers), default=0),
+    }
+
+
 def create_app(ctx) -> FastAPI:
     app = FastAPI(title="elegoo-notify", version="1.0.0",
                   docs_url=None, redoc_url=None, openapi_url=None)
@@ -470,6 +552,32 @@ def create_app(ctx) -> FastAPI:
         if matman.delete_profile(pid):
             return {"ok": True}
         raise HTTPException(404, "profilo built-in o non trovato")
+
+    # ---- GCODE viewer: parse e preview 3D ----
+    @app.get("/gcodes/{name}/preview", dependencies=[Depends(require_auth)])
+    async def gcode_preview(name: str, max_layers: int = 500) -> dict:
+        """Parse GCODE e ritorna segmenti per il viewer 3D.
+        Raggruppa per layer, colora per tipo (;TYPE: comment)."""
+        safe = Path(name).name
+        gcode_dir = Path(cfg.paths.get("gcodes", "data/gcodes"))
+        path = gcode_dir / safe
+        if not path.is_file() or path.suffix.lower() not in (".gcode", ".gco", ".g"):
+            raise HTTPException(404, "gcode non trovato")
+
+        try:
+            segments = _parse_gcode(path, max_layers)
+        except Exception as e:
+            raise HTTPException(500, f"errore parsing gcode: {e}") from e
+        return segments
+
+    @app.get("/gcodes/{name}/file", dependencies=[Depends(require_auth)])
+    async def gcode_file(name: str):
+        """Serve il file GCODE raw (per download)."""
+        safe = Path(name).name
+        path = Path(cfg.paths.get("gcodes", "data/gcodes")) / safe
+        if not path.is_file():
+            raise HTTPException(404, "file non trovato")
+        return FileResponse(path, media_type="text/plain", filename=safe)
 
     @app.post("/telegram/cmd", dependencies=[Depends(require_auth)])
     async def telegram_cmd(body: dict) -> dict:

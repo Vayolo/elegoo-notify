@@ -169,8 +169,49 @@ class MaterialManager:
             return True
         return False
 
+    # chiavi → nome ini PrusaSlicer
+    PROFILE_INI_KEYS = {
+        "layer_height": "layer_height",
+        "first_layer_height": "first_layer_height",
+        "perimeters": "perimeters",
+        "top_solid_layers": "top_solid_layers",
+        "bottom_solid_layers": "bottom_solid_layers",
+        "external_perimeter_speed": "external_perimeter_speed",
+        "perimeter_speed": "perimeter_speed",
+        "infill_speed": "infill_speed",
+        "solid_infill_speed": "solid_infill_speed",
+        "top_solid_infill_speed": "top_solid_infill_speed",
+        "first_layer_speed": "first_layer_speed",
+        "travel_speed": "travel_speed",
+        "bridge_speed": "bridge_speed",
+        "default_acceleration": "default_acceleration",
+        "perimeter_acceleration": "perimeter_acceleration",
+        "infill_acceleration": "infill_acceleration",
+        "default_infill": "infill_density",
+        "infill_pattern": "infill_pattern",
+        "extrusion_width": "extrusion_width",
+        "first_layer_extrusion_width": "first_layer_extrusion_width",
+        "support_material_spacing": "support_material_spacing",
+        "skirt_loops": "skirts",
+        "skirt_distance": "skirt_distance",
+        "brim_width": "brim_width",
+        "bridge_flow_ratio": "bridge_flow_ratio",
+        "seam_position": "seam_position",
+        "small_perimeter_speed": "small_perimeter_speed",
+        "gap_fill_speed": "gap_fill_speed",
+        "support_material_speed": "support_material_speed",
+    }
+
+    # campi booleani (0/1)
+    PROFILE_BOOL_KEYS = {
+        "support_material": "support_material",
+        "support_material_buildplate_only": "support_material_buildplate_only",
+        "thin_walls": "thin_walls",
+        "avoid_crossing_perimeters": "avoid_crossing_perimeters",
+    }
+
     def profile_to_ini(self, pid: str) -> Optional[str]:
-        """Genera l'INI override per un profilo custom."""
+        """Genera l'INI override per un profilo custom (TUTTI i parametri)."""
         p = None
         for pr in self.list_profiles():
             if pr["id"] == pid:
@@ -179,20 +220,12 @@ class MaterialManager:
         if not p:
             return None
         if p.get("builtin"):
-            return None  # i built-in usano i file INI esistenti
-        lines = [
-            f"# Profilo custom: {p.get('name', pid)}",
-            f"layer_height = {p.get('layer_height', 0.2)}",
-            f"first_layer_height = {p.get('first_layer_height', 0.2)}",
-            f"perimeters = {p.get('perimeters', 2)}",
-            f"top_solid_layers = {p.get('top_solid_layers', 5)}",
-            f"bottom_solid_layers = {p.get('bottom_solid_layers', 3)}",
-            f"external_perimeter_speed = {p.get('external_perimeter_speed', 160)}",
-            f"perimeter_speed = {p.get('perimeter_speed', 200)}",
-            f"infill_speed = {p.get('infill_speed', 200)}",
-        ]
-        if "infill_density" in p:
-            lines.append(f"infill_density = {p['infill_density']}")
-        if "default_infill" in p:
-            lines.append(f"infill_density = {p['default_infill']}")
+            return None
+        lines = [f"# Profilo custom: {p.get('name', pid)} (generato {time.strftime('%Y%m%d %H%M%S')})"]
+        for key, ini_key in self.PROFILE_INI_KEYS.items():
+            if key in p and p[key] is not None:
+                lines.append(f"{ini_key} = {p[key]}")
+        for key, ini_key in self.PROFILE_BOOL_KEYS.items():
+            if key in p:
+                lines.append(f"{ini_key} = {1 if p[key] else 0}")
         return "\n".join(lines) + "\n"
