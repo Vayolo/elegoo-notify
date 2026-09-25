@@ -140,6 +140,18 @@ def _parse_gcode(path: Path, max_layers: int = 500) -> dict:
 def create_app(ctx) -> FastAPI:
     app = FastAPI(title="elegoo-notify", version="1.0.0",
                   docs_url=None, redoc_url=None, openapi_url=None)
+    # PWA fix: corregge i Content-Type che FastPI sovrascrive
+    @app.middleware("http")
+    async def pwa_content_types(request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if path == "/manifest.json":
+            response.headers["Content-Type"] = "application/manifest+json"
+        elif path == "/sw.js":
+            response.headers["Content-Type"] = "application/javascript"
+            response.headers["Service-Worker-Allowed"] = "/"
+        return response
+
     # vendor JS per la dashboard (three.js & co) — prima mancava il mount!
     vendor_dir = Path(__file__).resolve().parents[2] / "dashboard" / "vendor"
     if vendor_dir.is_dir():
@@ -253,11 +265,25 @@ def create_app(ctx) -> FastAPI:
         return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=--foo")
 
     @app.get("/sw.js")
-    async def sw() -> FileResponse:
+    async def sw():
+        from fastapi.responses import PlainTextResponse
         swp = Path(__file__).resolve().parents[2] / "dashboard" / "sw.js"
         if not swp.is_file():
             raise HTTPException(404, "sw.js non trovato")
-        return FileResponse(swp, media_type="application/javascript")
+        return PlainTextResponse(swp.read_text(encoding="utf-8"),
+                                 headers={
+                                     "Content-Type": "application/javascript",
+                                     "Service-Worker-Allowed": "/",
+                                     "Cache-Control": "no-cache"})
+
+    @app.get("/manifest.json")
+    async def manifest():
+        from fastapi.responses import PlainTextResponse
+        mp = Path(__file__).resolve().parents[2] / "dashboard" / "assets" / "manifest.json"
+        if not mp.is_file():
+            raise HTTPException(404, "manifest non trovato")
+        return PlainTextResponse(mp.read_text(encoding="utf-8"),
+                                  headers={"Content-Type": "application/manifest+json"})
 
     @app.get("/", dependencies=[Depends(require_auth)])
     async def dashboard() -> FileResponse:
@@ -592,6 +618,28 @@ def create_app(ctx) -> FastAPI:
         if not path.is_file():
             raise HTTPException(404, "file non trovato")
         return FileResponse(path, media_type="text/plain", filename=safe)
+
+    # ---- Export stats CSV ----
+    @app.get("/stats/export", dependencies=[Depends(require_auth)])
+    async def stats_export() -> Response:
+        """Esporta la storia stampe come CSV."""
+        import csv
+        import io
+        hist = store.get_history(1000)
+        out = io.StringIO()
+        w = csv.writer(out)
+        w.writerow(["id", "timestamp", "data", "file", "durata_s", "filamento_mm",
+                     "filamento_g", "materiale", "successo", "errore"])
+        for r in hist:
+            from datetime import datetime
+            dt = datetime.fromtimestamp(r.get("ts", 0)).strftime("%Y-%m-%d %H:%M")
+            w.writerow([
+                r.get("id", ""), dt, r.get("filename", ""),
+                r.get("duration_s", ""), r.get("filament_mm", ""),
+                r.get("filament_g", ""), r.get("material", ""),
+                "si" if r.get("success") else "no", r.get("error", "")])
+        return Response(content=out.getvalue(), media_type="text/csv",
+                        headers={"Content-Disposition": "attachment; filename=elegoo-stampe.csv"})
 
     @app.post("/telegram/cmd", dependencies=[Depends(require_auth)])
     async def telegram_cmd(body: dict) -> dict:

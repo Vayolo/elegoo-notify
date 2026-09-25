@@ -16,5 +16,17 @@
       "sizes": "512x512",
       "type": "image/png"
     }
-  ]
+  ],
+  "scope": "/",
+  "display_override": [
+    "standalone",
+    "minimal-ui",
+    "browser"
+  ],
+  "orientation": "any",
+  "categories": [
+    "productivity",
+    "utilities"
+  ],
+  "description": "Monitor e controllo per Elegoo Centauri Carbon"
 }

@@ -597,6 +597,13 @@ async function refreshSnaps(){
   }catch(_){}
 }
 $('aiRefresh').onclick=()=>{refreshAI();toast('AI','metriche aggiornate','info',2000)};
+$('statExport') && ($('statExport').onclick=()=>{
+  jfetch('/stats/export').then(r=>r.blob()).then(b=>{
+    const u=URL.createObjectURL(b);
+    const a=document.createElement('a');a.href=u;a.download='elegoo-stampe.csv';a.click();
+    toast('Export','CSV scaricato','ok',2500);
+  }).catch(e=>toast('Export fallito',String(e),'err'));
+});
 setInterval(refreshAI,4000);
 
 /* ============================ BOOT ============================ */
