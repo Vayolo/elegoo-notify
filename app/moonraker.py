@@ -156,16 +156,25 @@ class MoonrakerApi:
         await self._post("/printer/gcode/script", {"script": script})
 
     async def pause(self) -> None:
-        await self._post("/printer/print/pause")
+        # timeout lungo: durante PRINT_START Klipper può metterci 60+ secondi
+        await self._post("/printer/print/pause", timeout=60)
 
     async def resume(self) -> None:
-        await self._post("/printer/print/resume")
+        await self._post("/printer/print/resume", timeout=60)
 
     async def cancel(self) -> None:
-        await self._post("/printer/print/cancel")
+        # cancel durante PRINT_START: la risposta può tardare anche se
+        # il comando viene accettato (Klipper è nel bel mezzo del macro)
+        try:
+            await self._post("/printer/print/cancel", timeout=60)
+        except asyncio.TimeoutError:
+            # il cancel è probabilmente stato accettato ma la risposta
+            # è arrivata dopo il nostro timeout: NON propagare l'errore
+            log.warning("cancel: timeout ma probabilmente accettato")
 
     async def start(self, filename: str) -> None:
-        await self._post("/printer/print/start", {"filename": filename})
+        # 120s: se PRINT_START gira la stampante è occupata (legit)
+        await self._post("/printer/print/start", {"filename": filename}, timeout=120)
 
     async def set_speed(self, pct: int) -> None:
         await self.send_gcode(f"M220 S{int(pct)}")

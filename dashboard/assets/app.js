@@ -1046,11 +1046,16 @@ async function openGcodeViewer(name){
 
     const cam=new THREE.PerspectiveCamera(50,cvw/cvh,.1,3000);
     const controls=new THREE.OrbitControls(cam,canvas);
-    controls.target.set(128,20,128);
-    cam.position.set(128,180,420);
-
     const rend=new THREE.WebGLRenderer({canvas,antialias:true});
     rend.setSize(cvw,cvh);
+
+    // outline del volume di stampa (piatto 256x256, altezza 256)
+    const bedOutline=new THREE.BoxGeometry(256,1,256);
+    const bedEdges=new THREE.EdgesGeometry(bedOutline);
+    const bedLines=new THREE.LineSegments(bedEdges,
+      new THREE.LineBasicMaterial({color:0x2a6a8a,transparent:true,opacity:.5}));
+    bedLines.position.set(128,0.01,128);
+    sc.add(bedLines);
 
     // pre-crea un THREE.LineSegments per OGNI layer
     const layerMeshes=[];
@@ -1075,6 +1080,20 @@ async function openGcodeViewer(name){
       sc.add(mesh);
       layerMeshes.push(mesh);
     });
+
+    // auto-fit camera: guarda il CENTRO del modello, non il centro del piatto
+    const allX=[],allY=[],allZ=[];
+    data.layers.forEach(l=>l.segs.forEach(s=>{
+      allX.push(s.x1,s.x2);allY.push(l.z);allZ.push(s.y1,s.y2);
+    }));
+    const cx=(Math.min(...allX)+Math.max(...allX))/2;
+    const cz=(Math.min(...allZ)+Math.max(...allZ))/2;
+    const maxY=Math.max(...allY);
+    const spanX=Math.max(...allX)-Math.min(...allX);
+    const spanZ=Math.max(...allZ)-Math.min(...allZ);
+    const span=Math.max(spanX,spanZ,10);
+    controls.target.set(cx,maxY/2,cz);
+    cam.position.set(cx+span*1.2,maxY+span*0.8,cz+span*1.8);
 
     GCV={rend,raf:0,controls,cam,canvas,sc,layerMeshes,
          curLayer:data.layers.length, layers:data.layers};

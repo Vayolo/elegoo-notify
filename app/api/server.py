@@ -644,6 +644,19 @@ def create_app(ctx) -> FastAPI:
         return Response(content=out.getvalue(), media_type="text/csv",
                         headers={"Content-Disposition": "attachment; filename=elegoo-stampe.csv"})
 
+    @app.post("/cmd/firmware_restart", dependencies=[Depends(require_auth)])
+    async def cmd_firmware_restart() -> dict:
+        """Riavvia il firmware Klipper (utile dopo un shutdown)."""
+        try:
+            if ctx.moonraker_api is not None:
+                await ctx.moonraker_api.send_gcode("FIRMWARE_RESTART")
+                return {"ok": True, "command": "firmware_restart"}
+            raise HTTPException(502, "solo su COSMOS/Klipper")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(502, str(e)) from e
+
     @app.post("/telegram/cmd", dependencies=[Depends(require_auth)])
     async def telegram_cmd(body: dict) -> dict:
         """Inoltro da Home Assistant di un comando Telegram (il polling sta su HA).
