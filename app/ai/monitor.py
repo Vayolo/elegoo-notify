@@ -47,6 +47,8 @@ class AiMonitor:
         self.quiet_minutes: float = float(ai.get("quiet_minutes", 10))
         self._quiet_until: float = 0.0
         self.detectors: dict[str, dict[str, Any]] = ai.get("detectors", {})
+        self.ai_cfg: dict[str, Any] = ai
+        self.detection_only: bool = bool(ai.get("detection_only", False))
         self.spaghetti_min_layer: int = int(ai.get("spaghetti_min_layer", 7))
         self._spag_factor: float = float(ai.get("spaghetti_baseline_factor", 3.0))
         self.roi: tuple = tuple(ai.get("roi") or (0.03, 0.33, 0.94, 0.64))
@@ -69,6 +71,8 @@ class AiMonitor:
         self.layer_watch_enabled = bool(lw.get("enabled", True))
         self.layer_frame_delay: float = float(lw.get("frame_delay_s", 1.5))
         self._last_layer_seen: Optional[int] = None
+        self._layer_consecutive: dict[str, int] = {}
+        self._consecutive_layers: int = 3  # conferme su layer consecutivi
         self._layer_pending: Optional[asyncio.Task] = None
         self._counters: dict[str, int] = {}
         self._last_alert: dict[str, float] = {}
@@ -208,7 +212,12 @@ class AiMonitor:
                 return
             for typ, fired in (("detach", det.detach), ("breakage", det.breakage),
                                ("runout", det.runout)):
-                if fired:
+                if not fired:
+                    self._layer_consecutive.pop(typ, None)
+                    continue
+                self._layer_consecutive[typ] = self._layer_consecutive.get(typ, 0) + 1
+                if self._layer_consecutive.get(typ, 0) < self._consecutive_layers:
+                    continue
                     desc = {"detach": f"oggetto mancante/sparito dal piatto "
                                       f"(score {det.score:.2f}, devianza {det.deviance:.2f})",
                             "breakage": f"pezzo staccatosi dall'oggetto "
@@ -235,6 +244,11 @@ class AiMonitor:
                           force: bool = False) -> None:
         cfg_det = self.detectors.get(det.type, {})
         if not cfg_det.get("enabled", True):
+            return
+        # detection_only: logga ma NON notifica (per taratura)
+        if self.detection_only:
+            log.info("AI DETECT-ONLY [%s]: %s (score %.2f) — soppressa",
+                     det.type, det.description[:80], det.score)
             return
         severity = str(cfg_det.get("severity", "warning")).lower()
         count = self._counters.get(det.type, 0)
