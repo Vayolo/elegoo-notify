@@ -39,7 +39,9 @@ class Uploader:
     # ------------------------------------------------------------------ #
     def _sanitize(self, filename: str) -> str:
         name = Path(filename.replace("\\", "/")).name
-        name = re.sub(r"[^A-Za-z0-9._\- ]", "_", name).strip() or "print.gcode"
+        # sostituisci spazi e caratteri speciali con underscore (evita %20 sul printer)
+        name = re.sub(r"[^A-Za-z0-9._-]", "_", name).strip() or "print.gcode"
+        name = re.sub(r"_+", "_", name)
         if not any(name.lower().endswith(ext) for ext in ALLOWED_EXT):
             name += ".gcode"
         return name

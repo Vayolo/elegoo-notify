@@ -261,7 +261,9 @@ class Slicer:
 
         gcode_dir = Path(self.cfg.paths.get("gcodes", "data/gcodes"))
         gcode_dir.mkdir(parents=True, exist_ok=True)
-        gcode_name = Path(job.model).stem + ".gcode"
+        # sanitizza il nome (spazi/speciali → underscore, evita %20)
+        stem = re.sub(r"[^A-Za-z0-9._-]", "_", Path(job.model).stem)
+        gcode_name = re.sub(r"_+", "_", stem) + ".gcode"
         out_path = gcode_dir / gcode_name
 
         override = self._override_ini(job)
