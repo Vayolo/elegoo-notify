@@ -109,6 +109,7 @@ async def main() -> int:
     cfg = make_config()
     ctx = AppContext(cfg)
     await ctx.start()
+    ctx.ai._consecutive_layers = 1  # test: conferma immediata
 
     session = aiohttp.ClientSession()
     try:
