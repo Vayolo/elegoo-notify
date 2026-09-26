@@ -656,6 +656,32 @@ async function refreshSnaps(){
   }catch(_){}
 }
 $('aiRefresh').onclick=()=>{refreshAI();toast('AI','metriche aggiornate','info',2000)};
+
+// ---- speed control (M220) ----
+let speedApplied=true;
+const speedCtl=$('speedCtl'),speedLbl=$('speedLbl');
+if(speedCtl){
+  const savedSpeed=localStorage.getItem('elegoo_speed');
+  if(savedSpeed){speedCtl.value=savedSpeed;speedLbl.textContent=savedSpeed+'%';}
+  let speedTimer=null;
+  speedCtl.addEventListener('input',()=>{
+    speedLbl.textContent=speedCtl.value+'%';
+    speedApplied=false;
+    clearTimeout(speedTimer);
+  });
+  speedCtl.addEventListener('change',async()=>{
+    const pct=parseInt(speedCtl.value);
+    localStorage.setItem('elegoo_speed',String(pct));
+    speedCtl.disabled=true;
+    try{
+      const r=await jfetch('/cmd/speed',{method:'POST',body:JSON.stringify({percent:pct})});
+      const j=await r.json();
+      if(j.ok){toast('Velocità',`M220 S${pct} (${pct}%)`,'ok',2500);speedApplied=true}
+      else toast('Velocità rifiutata',j.error||('ack '+j.ack),'err');
+    }catch(e){toast('Errore velocità',String(e),'err')}
+    speedCtl.disabled=false;
+  });
+}
 $('statExport') && ($('statExport').onclick=()=>{
   jfetch('/stats/export').then(r=>r.blob()).then(b=>{
     const u=URL.createObjectURL(b);

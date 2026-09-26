@@ -153,7 +153,8 @@ class MoonrakerApi:
         return {}
 
     async def send_gcode(self, script: str) -> None:
-        await self._post("/printer/gcode/script", {"script": script})
+        # timeout lungo: se PRINT_START/gcode macro gira, Klipper è occupato
+        await self._post("/printer/gcode/script", {"script": script}, timeout=60)
 
     async def pause(self) -> None:
         # timeout lungo: durante PRINT_START Klipper può metterci 60+ secondi

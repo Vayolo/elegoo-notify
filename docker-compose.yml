@@ -10,8 +10,5 @@ services:
       - ELEGOO_CONFIG=/app/config.json
     volumes:
       - ./config.json:/app/config.json:ro
-      - ./data/logs:/app/data/logs
-      - ./data/snapshots:/app/data/snapshots
-      - ./data/gcodes:/app/data/gcodes
-      - ./data/models:/app/data/models
+      - ./data:/app/data
     restart: unless-stopped
